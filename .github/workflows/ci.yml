@@ -54,3 +54,15 @@ jobs:
           docker run -d --name api -p 8000:8000 alche-core-api
           for i in $(seq 1 15); do curl -fs localhost:8000/health && exit 0; sleep 2; done
           docker logs api; exit 1
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate

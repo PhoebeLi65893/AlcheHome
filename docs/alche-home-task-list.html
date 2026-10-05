@@ -30,6 +30,12 @@ h2{color:var(--primary-color);border-bottom:1px solid var(--border-color);paddin
 .actions-bar{display:flex;justify-content:flex-end;margin-bottom:20px}
 .btn{background:var(--primary-color);color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600}
 .btn:hover{background:var(--secondary-color)}
+details.tests{margin:8px 0 0;background:#fff;border:1px solid var(--border-color);border-radius:6px;padding:6px 12px}
+details.tests summary{cursor:pointer;font-weight:600;color:var(--primary-color)}
+details.tests ol{margin:8px 0 4px;padding-left:22px}
+details.tests li{margin-bottom:10px}
+details.tests code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-size:.85em}
+.exp{display:block;color:#1f6b40;font-size:.9rem;margin-top:2px}
 @media print{body{background:#fff}.container{box-shadow:none;padding:0;max-width:100%}.actions-bar{display:none}.progress-wrap{position:static}.task{break-inside:avoid}}
 </style>
 </head>
@@ -59,9 +65,40 @@ h2{color:var(--primary-color);border-bottom:1px solid var(--border-color);paddin
 <script>
 const phases=[
 {name:"Phase 0: Foundation",goal:"Repo, database and cloud environment ready.",tasks:[
-["T1","Repo and CI skeleton","Set up the monorepo (web, core-api, ai-agent, dispatcher, pipeline, infra), linting, and a CI pipeline.","Push a commit and watch CI go green, with a /health endpoint running locally via Docker Compose."],
-["T2","Database and migrations","Stand up PostgreSQL with pgvector and create the core tables (users, handymen, tickets, conversations, messages).","Run migrations, seed sample handymen, and query them in a SQL client."],
-["T3","Cloud dev environment","Use Terraform to provision the dev project: Cloud Run, Cloud SQL, GCS, Pub/Sub, Secret Manager.","terraform apply creates the stack, and the health endpoint answers on a public dev URL."]]},
+["T1","Repo and CI skeleton","Set up the monorepo (web, core-api, ai-agent, dispatcher, pipeline, infra), linting, and a CI pipeline.","Push a commit and watch CI go green, with a /health endpoint running locally via Docker Compose.",[
+"Confirm Docker Desktop is running: `docker version` ||Shows both a Client and a Server section.",
+"Run checks without Docker: `cd core-api`, `python -m venv .venv`, `.venv\\Scripts\\activate`, `pip install -r requirements-dev.txt`, then `ruff check .`, `ruff format --check .` and `pytest` ||Lint and format pass; tests pass (database tests are skipped unless DATABASE_URL is set).",
+"Start the stack from the project root: `docker compose up -d --build` ||Images build and the core-api container starts.",
+"Call the health endpoint: `curl.exe http://localhost:8000/health` (in PowerShell plain `curl` is an alias, so use `curl.exe` or `Invoke-RestMethod http://localhost:8000/health`) ||Returns {\"status\":\"ok\",\"service\":\"core-api\",...}.",
+"Check container health: `docker compose ps` ||core-api shows (healthy).",
+"Push to GitHub: `git add . && git commit -m \"T1\" && git push -u origin main`, then open the Actions tab ||The CI run is green, with both the core-api and docker-build jobs passing.",
+"Negative test (optional): add an unused import to core-api/app/main.py on a branch and open a pull request ||CI fails at the Lint step. Revert the change to get back to green."]],
+["T2","Database and migrations","Stand up PostgreSQL with pgvector and create the core tables (users, handymen, tickets, conversations, messages).","Run migrations, seed sample handymen, and query them in a SQL client.",[
+"Start everything: `docker compose up -d --build`, then `docker compose ps` ||db is healthy, migrate has exited with code 0, core-api is running. `docker compose logs migrate` shows the migration ran.",
+"Seed the sample data: `docker compose run --rm core-api python -m scripts.seed` ||Prints \"Seeded 6 handymen\". Run it a second time: the output is the same and no duplicates appear.",
+"Query the handymen: `docker compose exec db psql -U alche alche -c \"SELECT display_name, rating_avg, service_zips FROM handymen ORDER BY rating_avg DESC\"` ||Six rows, from Aisha T. (4.90) down to Dan K. (4.20).",
+"Check tables and pgvector: `docker compose exec db psql -U alche alche -c \"\\dt\"` and `docker compose exec db psql -U alche alche -c \"SELECT extname FROM pg_extension WHERE extname='vector'\"` ||users, handymen, handymen_skills, tickets, conversations and messages are listed (plus alembic_version); the second query returns vector.",
+"Check a constraint rejects bad data: `docker compose exec db psql -U alche alche -c \"INSERT INTO tickets (customer_id, category, issue_summary, urgency, location_zip) SELECT id,'MAGIC','x','FLEXIBLE','92101' FROM users LIMIT 1\"` ||Fails with a check constraint violation on tickets_category_check.",
+"Optional, use a SQL client: connect DBeaver or pgAdmin to localhost:5432 with user, password and database all set to alche ||You can browse the tables and the 6 seeded handymen.",
+"Run the database tests: set `$env:DATABASE_URL=\"postgresql+psycopg://alche:alche@localhost:5432/alche\"`, then `cd core-api` and `pytest` ||3 passed.",
+"Roll back and re-apply: `docker compose run --rm core-api alembic downgrade base`, then `docker compose run --rm core-api alembic upgrade head` ||Tables disappear after the downgrade and return after the upgrade. Re-run the seed afterwards.",
+"Push and check CI: commit and push ||CI is green, including the new Migrate step against a Postgres service.",
+"Reset when finished: `docker compose down -v` ||Containers and the database volume are removed."]],
+["T3","Cloud dev environment","Use Terraform to provision the dev project: Cloud Run, Cloud SQL, GCS, Pub/Sub, Secret Manager.","terraform apply creates the stack, and the health endpoint answers on a public dev URL.",[
+"Install the tools and check them: `gcloud --version` and `terraform version` (Terraform 1.6 or newer) ||Both print a version.",
+"Sign in and pick the project: `gcloud auth login`, `gcloud auth application-default login`, `gcloud config set project YOUR_PROJECT_ID` ||Billing must be enabled on the project, or the apply fails when creating Cloud SQL.",
+"Configure: `cd infra`, `copy terraform.tfvars.example terraform.tfvars`, then edit project_id ||terraform.tfvars is git-ignored and holds only your project ID.",
+"Validate: `terraform init`, `terraform fmt -check -recursive`, `terraform validate` ||All three succeed with no errors.",
+"Preview: `terraform plan` ||Lists resources to add (APIs, Artifact Registry, Cloud SQL, secret, bucket, Pub/Sub topics, service account, Cloud Run service and job) and nothing to change or destroy.",
+"Create the stack: `terraform apply` and type yes ||Finishes without errors in about 10-15 minutes (Cloud SQL is the slow part) and prints the outputs. If an API was only just enabled and a resource fails, run apply again.",
+"Check the placeholder deployed: `curl.exe \"$(terraform output -raw core_api_url)\"` ||Returns Google's placeholder page, so the Cloud Run service is live and public.",
+"Build and push the real image: `gcloud builds submit ../core-api --tag \"$(terraform output -raw artifact_registry_url)/core-api:v1\"` ||Cloud Build finishes with SUCCESS.",
+"Deploy it: `terraform apply -var \"core_api_image=$(terraform output -raw artifact_registry_url)/core-api:v1\"` ||Only the Cloud Run service and migrate job are updated in place.",
+"Run the database migrations in the cloud: `gcloud run jobs execute alche-dev-migrate --region us-west1 --wait` ||The execution completes successfully.",
+"Hit the public health endpoint: `curl.exe \"$(terraform output -raw core_api_url)/health\"` ||Returns {\"status\":\"ok\",\"service\":\"core-api\",\"env\":\"dev\",...}. This is the T3 demo.",
+"Spot-check the resources: `gcloud sql instances list`, `gcloud pubsub topics list`, `gcloud secrets list` ||Shows alche-dev-pg, four alche-dev-* topics and alche-dev-db-password.",
+"Push and check CI: commit and push ||CI is green, including the new terraform job (fmt, init, validate).",
+"Clean up when finished: `terraform destroy` ||Removes everything and stops the roughly $10-15/month Cloud SQL charge."]]]},
 {name:"Phase 1: MVP (Intake to SMS Dispatch)",goal:"A customer can describe a problem and a handyman can accept the job.",tasks:[
 ["T4","Authentication","Add Google and Facebook OIDC login, email/password, and JWT issue/refresh.","Log in with Google on the web app and see your profile from GET /me."],
 ["T5","Web chat shell","Build a chat UI with message persistence and an echo bot.","Type a message in the browser, see it echoed back, and find it stored in the messages table."],
@@ -90,12 +127,21 @@ const root=document.getElementById('root');
 let store={};
 try{store=JSON.parse(localStorage.getItem('alche-tasks')||'{}')}catch(e){}
 const total=phases.reduce((n,p)=>n+p.tasks.length,0);
+function code(s){return esc(s).replace(/`([^`]+)`/g,'<code>$1</code>')}
+function tests(a){
+ if(!a)return '';
+ return '<details class="tests"><summary>Test steps ('+a.length+')</summary><ol>'+a.map(x=>{
+  const [c,e]=x.split('||');
+  return '<li>'+code(c.trim())+(e?'<span class="exp">Expected: '+code(e.trim())+'</span>':'')+'</li>';
+ }).join('')+'</ol></details>';
+}
+window.addEventListener('beforeprint',()=>document.querySelectorAll('details').forEach(d=>d.open=true));
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 phases.forEach(p=>{
  const s=document.createElement('section');
  let h='<h2>'+esc(p.name)+'</h2><p class="phase-goal">'+esc(p.goal)+'</p>';
  p.tasks.forEach(t=>{
-  h+='<div class="task'+(store[t[0]]?' done':'')+'" id="'+t[0]+'"><input type="checkbox" '+(store[t[0]]?'checked':'')+' aria-label="Mark '+t[0]+' complete"><div><div><span class="t-id">'+t[0]+'</span><span class="t-title">'+esc(t[1])+'</span></div><div class="t-desc">'+esc(t[2])+'</div><div class="demo"><b>Demo:</b> '+esc(t[3])+'</div></div></div>';
+  h+='<div class="task'+(store[t[0]]?' done':'')+'" id="'+t[0]+'"><input type="checkbox" '+(store[t[0]]?'checked':'')+' aria-label="Mark '+t[0]+' complete"><div><div><span class="t-id">'+t[0]+'</span><span class="t-title">'+esc(t[1])+'</span></div><div class="t-desc">'+esc(t[2])+'</div><div class="demo"><b>Demo:</b> '+esc(t[3])+'</div>'+tests(t[4])+'</div></div>';
  });
  if(p.milestone)h+='<div class="milestone">'+esc(p.milestone)+'</div>';
  s.innerHTML=h;root.appendChild(s);
