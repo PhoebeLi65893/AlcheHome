@@ -45,6 +45,18 @@ Reset everything: `docker compose down -v`. Roll back one migration: `docker com
 API: `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`; `GET /auth/{google|facebook}/login`; `GET /me`.
 Access tokens last 15 minutes. Refresh tokens last 30 days, rotate on every use, and reuse of an old one ends all of that user's sessions.
 
+## T5 demo: chat shell with echo bot
+
+After signing in at `http://localhost:3000` the chat panel appears. Every message you send is stored in the
+`messages` table and answered by an echo bot (`core-api/app/bot.py`, replaced by Gemini in T6).
+
+API: `GET /chat/messages` (history, creates your single ACTIVE web conversation if needed) and
+`POST /chat/messages` with `{"body": "..."}`. Both need an `Authorization: Bearer <access token>` header.
+
+```bash
+docker compose exec db psql -U alche alche -c "SELECT sender, body, created_at FROM messages ORDER BY created_at DESC LIMIT 10"
+```
+
 ## Develop without Docker (needs a local Postgres with pgvector; set DATABASE_URL)
 
 ```bash

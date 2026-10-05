@@ -6,9 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import current_user
 from app.auth import router as auth_router
+from app.chat import router as chat_router
 from app.config import get_settings
 
-app = FastAPI(title="Alche Home Core API", version="0.2.0")
+app = FastAPI(title="Alche Home Core API", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,6 +18,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(auth_router)
+app.include_router(chat_router)
 
 
 @app.get("/health")
