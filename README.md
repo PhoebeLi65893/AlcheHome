@@ -23,7 +23,18 @@ curl http://localhost:8000/health
 
 Expected: `{"status":"ok","service":"core-api",...}`
 
-## Develop without Docker
+## T2 demo: database, migrations, seed data
+
+```bash
+docker compose up -d --build          # starts Postgres+pgvector, runs migrations, starts the API
+docker compose run --rm core-api python -m scripts.seed
+docker compose exec db psql -U alche alche -c "SELECT display_name, rating_avg, service_zips FROM handymen ORDER BY rating_avg DESC"
+```
+
+Connect a SQL client (DBeaver, pgAdmin, VS Code) to `localhost:5432`, user/password/database `alche`.
+Reset everything: `docker compose down -v`. Roll back one migration: `docker compose run --rm core-api alembic downgrade -1`.
+
+## Develop without Docker (needs a local Postgres with pgvector; set DATABASE_URL)
 
 ```bash
 cd core-api

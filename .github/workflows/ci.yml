@@ -8,6 +8,20 @@ on:
 jobs:
   core-api:
     runs-on: ubuntu-latest
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: alche
+          POSTGRES_PASSWORD: alche
+          POSTGRES_DB: alche
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alche" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://alche:alche@localhost:5432/alche
     defaults:
       run:
         working-directory: core-api
@@ -23,6 +37,8 @@ jobs:
         run: ruff check .
       - name: Format check
         run: ruff format --check .
+      - name: Migrate
+        run: alembic upgrade head
       - name: Test
         run: pytest
 
