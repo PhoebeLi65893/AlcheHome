@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
@@ -24,3 +25,9 @@ def database_url() -> str:
 
 def get_engine():
     return create_engine(database_url(), pool_pre_ping=True)
+
+
+@lru_cache
+def shared_engine():
+    """One pooled engine per process, used by the API."""
+    return get_engine()

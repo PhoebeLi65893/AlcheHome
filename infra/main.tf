@@ -54,6 +54,24 @@ resource "google_secret_manager_secret_version" "db_password" {
   secret_data = random_password.db.result
 }
 
+resource "random_password" "jwt" {
+  length  = 48
+  special = false
+}
+
+resource "google_secret_manager_secret" "jwt" {
+  secret_id = "${local.name}-jwt-secret"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "jwt" {
+  secret      = google_secret_manager_secret.jwt.id
+  secret_data = random_password.jwt.result
+}
+
 resource "google_sql_database_instance" "pg" {
   name                = "${local.name}-pg"
   region              = var.region
@@ -127,6 +145,12 @@ resource "google_secret_manager_secret_iam_member" "run_db_password" {
   member    = "serviceAccount:${google_service_account.run.email}"
 }
 
+resource "google_secret_manager_secret_iam_member" "run_jwt" {
+  secret_id = google_secret_manager_secret.jwt.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.run.email}"
+}
+
 resource "google_storage_bucket_iam_member" "run_media" {
   bucket = google_storage_bucket.media.name
   role   = "roles/storage.objectAdmin"
@@ -174,6 +198,15 @@ resource "google_cloud_run_v2_service" "core_api" {
           }
         }
       }
+      env {
+        name = "JWT_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.jwt.secret_id
+            version = "latest"
+          }
+        }
+      }
 
       volume_mounts {
         name       = "cloudsql"
@@ -185,6 +218,8 @@ resource "google_cloud_run_v2_service" "core_api" {
   depends_on = [
     google_secret_manager_secret_version.db_password,
     google_secret_manager_secret_iam_member.run_db_password,
+    google_secret_manager_secret_version.jwt,
+    google_secret_manager_secret_iam_member.run_jwt,
     google_project_iam_member.run_sql,
   ]
 }

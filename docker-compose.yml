@@ -31,6 +31,14 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-local}
       DATABASE_URL: postgresql+psycopg://alche:alche@db:5432/alche
+      API_BASE_URL: http://localhost:8000
+      WEB_BASE_URL: http://localhost:3000
+      JWT_SECRET: ${JWT_SECRET:-}
+      ACCESS_TTL_MIN: ${ACCESS_TTL_MIN:-15}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -39,6 +47,13 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  web:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
 
 volumes:
   pgdata:
