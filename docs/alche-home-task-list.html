@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alche Home - Implementation Task List</title>
+<style>
+:root{--primary-color:#2b5c8f;--secondary-color:#4776a6;--accent-color:#f39c12;--bg-color:#f8f9fa;--text-color:#2c3e50;--border-color:#e2e8f0;--card-bg:#fff}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.6;color:var(--text-color);background:var(--bg-color);margin:0}
+.container{max-width:1100px;margin:40px auto;background:var(--card-bg);padding:50px;box-shadow:0 10px 25px rgba(0,0,0,.05);border-radius:12px}
+header{border-bottom:3px solid var(--primary-color);padding-bottom:20px;margin-bottom:30px}
+h1{color:var(--primary-color);margin:0 0 10px;font-size:2.5rem}
+.subtitle{font-size:1.2rem;color:#666;margin:0}
+.meta-info{display:flex;flex-wrap:wrap;gap:20px;margin-top:15px;font-size:.9rem;color:#777}
+h2{color:var(--primary-color);border-bottom:1px solid var(--border-color);padding-bottom:8px;margin-top:40px}
+.phase-goal{color:#666;margin:-4px 0 14px}
+.task{display:flex;gap:14px;background:#f8fafc;border-left:4px solid var(--primary-color);padding:14px 20px;margin:12px 0;border-radius:0 8px 8px 0}
+.task.done{opacity:.6;border-left-color:#2e9e5b}
+.task.done .t-title{text-decoration:line-through}
+.task input{width:20px;height:20px;margin-top:5px;cursor:pointer;flex:none}
+.t-id{display:inline-block;background:var(--primary-color);color:#fff;border-radius:4px;padding:0 8px;font-size:.8rem;font-weight:700;margin-right:8px}
+.t-title{font-weight:700;color:var(--primary-color)}
+.t-desc{margin:4px 0}
+.demo{margin:6px 0 0;background:#fff4de;border-radius:6px;padding:6px 12px;font-size:.93rem}
+.demo b{color:#9a6200}
+.milestone{background:#e8f6ee;border:1px solid #b7e2c8;color:#1f6b40;border-radius:8px;padding:10px 16px;font-weight:600;margin:16px 0}
+.progress-wrap{background:#f1f5f9;border:1px solid var(--border-color);border-radius:8px;padding:12px 18px;position:sticky;top:0;z-index:5}
+.bar{height:10px;background:#e2e8f0;border-radius:6px;overflow:hidden;margin-top:6px}
+.bar>div{height:100%;width:0;background:var(--accent-color);transition:width .3s}
+.actions-bar{display:flex;justify-content:flex-end;margin-bottom:20px}
+.btn{background:var(--primary-color);color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600}
+.btn:hover{background:var(--secondary-color)}
+@media print{body{background:#fff}.container{box-shadow:none;padding:0;max-width:100%}.actions-bar{display:none}.progress-wrap{position:static}.task{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="actions-bar"><button class="btn" onclick="window.print()">Print / Save to PDF</button></div>
+<header>
+<h1>Alche Home</h1>
+<p class="subtitle">Implementation Task List: Step-by-Step Demos Based on the System Architecture Document</p>
+<div class="meta-info">
+<span><strong>Status:</strong> Ready for Sprint Planning</span>
+<span><strong>Version:</strong> 1.0.0</span>
+<span><strong>Tasks:</strong> 22 across 4 phases</span>
+<span><strong>Input:</strong> SAD v1.0.0</span>
+</div>
+</header>
+
+<div class="progress-wrap">
+<strong id="ptext">0 of 22 tasks complete</strong>
+<div class="bar"><div id="pbar"></div></div>
+</div>
+<p style="font-size:.9rem;color:#777">Tick a task when its demo has been shown. Progress is saved in this browser only.</p>
+
+<div id="root"></div>
+</div>
+
+<script>
+const phases=[
+{name:"Phase 0: Foundation",goal:"Repo, database and cloud environment ready.",tasks:[
+["T1","Repo and CI skeleton","Set up the monorepo (web, core-api, ai-agent, dispatcher, pipeline, infra), linting, and a CI pipeline.","Push a commit and watch CI go green, with a /health endpoint running locally via Docker Compose."],
+["T2","Database and migrations","Stand up PostgreSQL with pgvector and create the core tables (users, handymen, tickets, conversations, messages).","Run migrations, seed sample handymen, and query them in a SQL client."],
+["T3","Cloud dev environment","Use Terraform to provision the dev project: Cloud Run, Cloud SQL, GCS, Pub/Sub, Secret Manager.","terraform apply creates the stack, and the health endpoint answers on a public dev URL."]]},
+{name:"Phase 1: MVP (Intake to SMS Dispatch)",goal:"A customer can describe a problem and a handyman can accept the job.",tasks:[
+["T4","Authentication","Add Google and Facebook OIDC login, email/password, and JWT issue/refresh.","Log in with Google on the web app and see your profile from GET /me."],
+["T5","Web chat shell","Build a chat UI with message persistence and an echo bot.","Type a message in the browser, see it echoed back, and find it stored in the messages table."],
+["T6","Gemini text intake","Build the AI Agent Service with context building, Gemini Flash replies, and the Safety Layer's emergency rules.","Say \"my sink is leaking\" and get clarifying questions. Say \"I smell gas\" and get 911 guidance instead of the normal flow."],
+["T7","Photo upload and multimodal analysis","Add GCS signed uploads and pass images to Gemini.","Upload a leak photo and watch the bot name the issue and estimate severity."],
+["T8","Ticket creation via function calling","Wire up create_repair_ticket with schema validation and the ticket state machine (DRAFT to OPEN).","Finish a chat and see a ticket row appear, with a ticket card shown in the UI."],
+["T9","Twilio SMS inbound/outbound","Build the webhook with signature verification and idempotency, plus the channel adapter.","Text your Twilio number from your phone and have the same Gemini intake conversation by SMS."],
+["T10","Handyman data and matching","Add handyman profiles, skills, and zip coverage, plus the scoring algorithm.","An admin script takes a ticket and prints the ranked handyman list with scores."],
+["T11","Dispatch by SMS","Send offers, parse ACCEPT #1024 and DECLINE, and handle timeouts and fallback to the next handyman.","A real phone receives a job offer, replies ACCEPT, and the ticket moves to ASSIGNED. Ignore one offer and watch it roll to the next handyman."],
+["T12","Ops fallback dashboard","Build a simple admin page listing UNMATCHED tickets with a manual assign button.","Force an unmatched ticket, then assign it by hand."]],
+milestone:"MVP milestone: full end-to-end demo from web chat to handyman acceptance."},
+{name:"Phase 2: Bridge, WhatsApp, Ratings",goal:"Private customer-handyman communication and feedback loop.",tasks:[
+["T13","Proxy messaging bridge","Create Twilio Proxy sessions with masked numbers and log relayed messages to messages.","Customer and handyman text each other and neither sees the other's real number."],
+["T14","Progressive info disclosure","Reveal the address and details to the handyman only after ASSIGNED.","Compare the offer SMS (zip only) with the post-accept message (full address)."],
+["T15","WhatsApp channel","Add the Meta webhook, template approval, and the 24-hour window logic.","Run the same intake conversation over WhatsApp."],
+["T16","Ticket lifecycle and ratings","Add IN_PROGRESS, COMPLETED, and RATED states, a rating request SMS, and the reviews table.","Complete a job, reply with a rating, and see the handyman's average update."],
+["T17","Observability","Add structured logs, OpenTelemetry traces, dashboards, and alerts (DLQ depth, UNMATCHED older than 15 minutes).","Trigger a failure and watch the alert fire. Open a trace spanning API, queue, and agent."]]},
+{name:"Phase 3: Knowledge Base and Fine-Tuning",goal:"Learn from completed jobs while protecting privacy.",tasks:[
+["T18","Consent and data capture","Add the opt-in at onboarding and a deletion request flow.","An opted-out user's data is excluded from a pipeline dry run."],
+["T19","PII redaction and kb_chunks","Redact with Cloud DLP plus regex, then embed into pgvector.","Before/after view of a conversation with names, phones, and addresses removed."],
+["T20","RAG in the agent","Retrieve similar past cases into the Context Builder.","Ask a question the bot previously answered poorly and compare answers with and without RAG."],
+["T21","Fine-tuning dataset and first tuning run","Build the Airflow DAG: extract rated conversations (4 stars or higher), export JSONL, and launch a Vertex AI tuning job.","Trigger the DAG, inspect the JSONL, and see the tuning job running in Vertex."],
+["T22","Hardening and launch checklist","Run load tests, add Cloud Armor rate limits, set up backup and restore, and run a security review.","Load test the webhook with p95 under 500 ms, then restore a database backup."]]}
+];
+const root=document.getElementById('root');
+let store={};
+try{store=JSON.parse(localStorage.getItem('alche-tasks')||'{}')}catch(e){}
+const total=phases.reduce((n,p)=>n+p.tasks.length,0);
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+phases.forEach(p=>{
+ const s=document.createElement('section');
+ let h='<h2>'+esc(p.name)+'</h2><p class="phase-goal">'+esc(p.goal)+'</p>';
+ p.tasks.forEach(t=>{
+  h+='<div class="task'+(store[t[0]]?' done':'')+'" id="'+t[0]+'"><input type="checkbox" '+(store[t[0]]?'checked':'')+' aria-label="Mark '+t[0]+' complete"><div><div><span class="t-id">'+t[0]+'</span><span class="t-title">'+esc(t[1])+'</span></div><div class="t-desc">'+esc(t[2])+'</div><div class="demo"><b>Demo:</b> '+esc(t[3])+'</div></div></div>';
+ });
+ if(p.milestone)h+='<div class="milestone">'+esc(p.milestone)+'</div>';
+ s.innerHTML=h;root.appendChild(s);
+});
+function update(){
+ const n=Object.values(store).filter(Boolean).length;
+ document.getElementById('ptext').textContent=n+' of '+total+' tasks complete';
+ document.getElementById('pbar').style.width=(n/total*100)+'%';
+}
+root.addEventListener('change',e=>{
+ const box=e.target.closest('.task');if(!box)return;
+ store[box.id]=e.target.checked;box.classList.toggle('done',e.target.checked);
+ try{localStorage.setItem('alche-tasks',JSON.stringify(store))}catch(err){}
+ update();
+});
+update();
+</script>
+</body>
+</html>
