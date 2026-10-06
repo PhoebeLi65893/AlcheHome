@@ -6,6 +6,7 @@ DEV_JWT_SECRET = "dev-only-secret-change-me-dev-only-secret"
 
 @dataclass(frozen=True)
 class Settings:
+    app_env: str
     jwt_secret: str
     access_ttl_min: int
     refresh_ttl_days: int
@@ -34,6 +35,7 @@ def get_settings() -> Settings:
         secret = DEV_JWT_SECRET
     web = (os.getenv("WEB_BASE_URL") or "http://localhost:3000").rstrip("/")
     return Settings(
+        app_env=env,
         jwt_secret=secret,
         access_ttl_min=int(os.getenv("ACCESS_TTL_MIN") or 15),
         refresh_ttl_days=int(os.getenv("REFRESH_TTL_DAYS") or 30),

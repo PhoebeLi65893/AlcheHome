@@ -24,6 +24,15 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
 .bubble{max-width:80%;padding:8px 12px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word}
 .USER{align-self:flex-end;background:#2b5c8f;color:#fff;border-bottom-right-radius:4px}
 .BOT{align-self:flex-start;background:#e8edf3;border-bottom-left-radius:4px}
+.ticket{margin-top:8px;background:#fff;color:#2c3e50;border:1px solid #cbd5e1;border-left:4px solid #2b5c8f;border-radius:8px;padding:10px 12px;font-weight:400;white-space:normal}
+.ticket .head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:700;color:#2b5c8f}
+.ticket .status{font-size:.75rem;font-weight:700;padding:2px 8px;border-radius:10px;background:#e8f0f9;color:#2b5c8f}
+.ticket .status.CANCELLED{background:#f1f5f9;color:#64748b}
+.ticket dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:8px 0 0;font-size:.88rem}
+.ticket dt{color:#64748b}.ticket dd{margin:0}
+.ticket .summary{margin:6px 0 0;font-size:.92rem}
+.ticket button{width:auto;margin:8px 0 0;padding:6px 12px;font-size:.85rem}
+.top .actions{display:flex;gap:8px}
 .EMERGENCY{background:#fdecea;border:2px solid #b42318;color:#7a1b12;font-weight:600;max-width:95%}
 .pending{opacity:.6;font-style:italic}
 .empty{color:#94a3b8;text-align:center;margin:auto}
@@ -58,7 +67,7 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
 </section>
 
 <section id="signedIn" class="hide">
-  <div class="top"><span id="who"></span><button class="alt" onclick="logout()">Log out</button></div>
+  <div class="top"><span id="who"></span><span class="actions"><button class="alt" onclick="newRequest()" title="Start over for a different problem">New request</button><button class="alt" onclick="logout()">Log out</button></span></div>
   <details>
     <summary>Profile (GET /me)</summary>
     <pre id="profile"></pre>
@@ -172,6 +181,44 @@ function addPhotos(bubble, sources) {
   bubble.prepend(wrap);
 }
 
+const LABELS = {
+  PLUMBING: 'Plumbing', ELECTRICAL: 'Electrical', HVAC: 'Heating / cooling', CARPENTRY: 'Carpentry',
+  APPLIANCE: 'Appliance', GENERAL: 'General repair', EMERGENCY: 'Emergency', SAME_DAY: 'Today',
+  FLEXIBLE: 'Flexible', LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High'
+};
+const label = v => LABELS[v] || v;
+const CANCELLABLE = ['DRAFT', 'OPEN', 'MATCHING', 'UNMATCHED', 'ASSIGNED', 'IN_PROGRESS'];
+
+// Built with textContent only, so nothing from the ticket is interpreted as HTML.
+function ticketCard(t) {
+  const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+  const card = el('div', 'ticket');
+  const head = el('div', 'head');
+  head.append(el('span', null, 'Repair request #' + t.number), el('span', 'status ' + t.status, t.status.replace('_', ' ')));
+  const dl = el('dl');
+  [['Type', label(t.category)], ['When', label(t.urgency)], ['ZIP', t.location_zip]]
+    .concat(t.severity ? [['Severity', label(t.severity)]] : [])
+    .forEach(([k, v]) => dl.append(el('dt', null, k), el('dd', null, v)));
+  card.append(head, el('p', 'summary', t.issue_summary), dl);
+  if (CANCELLABLE.includes(t.status)) {
+    const b = el('button', 'alt', 'Cancel request');
+    b.onclick = async () => {
+      if (!confirm('Cancel repair request #' + t.number + '?')) return;
+      b.disabled = true;
+      try { card.replaceWith(ticketCard(await authed('/tickets/' + t.id + '/cancel', { method: 'POST' }))); }
+      catch (e) { msg(e.message); b.disabled = false; }
+    };
+    card.append(b);
+  }
+  return card;
+}
+
+async function newRequest() {
+  if (!confirm('Start a new request? This chat will be closed; existing repair requests are kept.')) return;
+  try { await authed('/chat/new', { method: 'POST' }); await loadChat(); msg(); }
+  catch (e) { msg(e.message); }
+}
+
 function addBubble(m, extra, localUrls) {
   const empty = document.querySelector('#chat .empty');
   if (empty) empty.remove();
@@ -180,6 +227,7 @@ function addBubble(m, extra, localUrls) {
   d.textContent = m.body;            // textContent: message text is never interpreted as HTML
   if (localUrls && localUrls.length) addPhotos(d, localUrls.map(url => ({ url })));
   else if (m.media_ids && m.media_ids.length) addPhotos(d, m.media_ids.map(id => ({ id })));
+  if (m.ticket) d.appendChild(ticketCard(m.ticket));
   $('chat').appendChild(d);
   $('chat').scrollTop = $('chat').scrollHeight;
   return d;

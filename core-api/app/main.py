@@ -9,8 +9,9 @@ from app.auth import router as auth_router
 from app.chat import router as chat_router
 from app.config import get_settings
 from app.media import router as media_router
+from app.tickets.router import router as tickets_router
 
-app = FastAPI(title="Alche Home Core API", version="0.4.0")
+app = FastAPI(title="Alche Home Core API", version="0.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,6 +22,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(media_router)
+app.include_router(tickets_router)
 
 
 @app.get("/health")

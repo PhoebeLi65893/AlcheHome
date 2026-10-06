@@ -24,9 +24,9 @@ def test_chat_uses_gemini_reply_and_sends_history(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     calls = []
 
-    def fake(contents):
+    def fake(contents, **kw):
         calls.append(contents)
-        return f"reply {len(calls)}"
+        return gemini.GeminiResult(f"reply {len(calls)}")
 
     monkeypatch.setattr(gemini, "generate", fake)
     h = signed_in()
@@ -41,7 +41,9 @@ def test_chat_uses_gemini_reply_and_sends_history(monkeypatch):
 
 def test_emergency_reply_is_flagged_persisted_and_skips_gemini(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
-    monkeypatch.setattr(gemini, "generate", lambda c: pytest.fail("Gemini must not be called"))
+    monkeypatch.setattr(
+        gemini, "generate", lambda c, **kw: pytest.fail("Gemini must not be called")
+    )
     h = signed_in()
     r = client.post("/chat/messages", json={"body": "I smell gas in the kitchen"}, headers=h)
     assert r.status_code == 201
@@ -55,7 +57,7 @@ def test_emergency_reply_is_flagged_persisted_and_skips_gemini(monkeypatch):
 def test_gemini_outage_still_returns_a_reply(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
 
-    def down(contents):
+    def down(contents, **kw):
         raise gemini.GeminiError("down")
 
     monkeypatch.setattr(gemini, "generate", down)

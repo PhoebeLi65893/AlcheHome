@@ -83,6 +83,25 @@ In the chat, click **Photo**, pick up to 3 JPEG/PNG/WebP photos (10 MB each), ad
 - Storage: a Docker volume (`media`) locally; the Cloud Storage bucket from T3 in the cloud (`MEDIA_BACKEND=gcs`).
 - Without a Gemini key the echo bot answers "(received 1 photo)".
 
+## T8 demo: ticket creation via function calling
+
+When the assistant knows the problem, urgency and ZIP code, it summarizes and asks whether to create a repair
+request. When you agree, Gemini calls the `create_repair_ticket` tool. The API then:
+
+1. validates the arguments (`core-api/app/tickets/schema.py`): category and urgency from fixed lists, a 10-500
+   character summary, a 5-digit ZIP. Invalid arguments create nothing; the assistant asks for what is missing.
+2. creates the ticket as DRAFT and moves it to OPEN through the state machine (`app/tickets/state.py`), recording
+   both steps in `ticket_events`, links it to the conversation and attaches the conversation's photos.
+3. writes the confirmation (with the real ticket number) itself, and the chat shows a ticket card.
+
+One ticket per conversation: after it exists the tool is no longer offered. **New request** starts a fresh
+conversation. API: `GET /tickets`, `GET /tickets/{id}` (with events and photos), `POST /tickets/{id}/cancel`,
+`POST /chat/new`.
+
+**Testing without Gemini** (local only, `APP_ENV=local` and no `GEMINI_API_KEY`): type
+`/ticket CATEGORY URGENCY ZIP summary`, e.g. `/ticket plumbing same_day 92101 Kitchen sink dripping under the cabinet`.
+It runs the same validation and creation code as the Gemini tool call.
+
 ## Develop without Docker (needs a local Postgres with pgvector; set DATABASE_URL)
 
 ```bash

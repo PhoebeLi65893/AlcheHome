@@ -8,7 +8,7 @@ _ROLE = {"USER": "user", "HANDYMAN": "user", "BOT": "model"}
 
 def _text_of(row) -> str:
     body = (row.body or "")[:MAX_CHARS]
-    if getattr(row, "media_refs", None):
+    if getattr(row, "media_ids", None):
         return f"{body} {PHOTO_NOTE}".strip()
     return body
 

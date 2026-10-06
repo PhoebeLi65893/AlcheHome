@@ -26,7 +26,9 @@ def test_context_keeps_only_recent_turns():
 
 def test_emergency_never_calls_gemini_even_with_a_key(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
-    monkeypatch.setattr(gemini, "generate", lambda c: pytest.fail("Gemini must not be called"))
+    monkeypatch.setattr(
+        gemini, "generate", lambda c, **kw: pytest.fail("Gemini must not be called")
+    )
     reply = service.respond([row("USER", "I smell gas")], "I smell gas")
     assert reply.emergency and reply.source == "safety"
     assert "911" in reply.text
@@ -40,7 +42,11 @@ def test_without_key_falls_back_to_echo():
 def test_with_key_uses_gemini_with_history(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     seen = {}
-    monkeypatch.setattr(gemini, "generate", lambda c: seen.setdefault("c", c) and "Where is it?")
+    monkeypatch.setattr(
+        gemini,
+        "generate",
+        lambda c, **kw: seen.setdefault("c", c) and gemini.GeminiResult("Where is it?"),
+    )
     reply = service.respond([row("USER", "my sink is leaking")], "my sink is leaking")
     assert reply.text == "Where is it?" and reply.source == "gemini"
     assert seen["c"][0]["parts"][0]["text"] == "my sink is leaking"
@@ -50,7 +56,7 @@ def test_with_key_uses_gemini_with_history(monkeypatch):
 def test_gemini_failure_returns_fallback_with_911_reminder(monkeypatch, error):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
 
-    def boom(contents):
+    def boom(contents, **kw):
         raise error
 
     monkeypatch.setattr(gemini, "generate", boom)
@@ -79,11 +85,12 @@ def test_gemini_client_builds_request_and_parses_reply(monkeypatch):
 
     monkeypatch.setattr(gemini.httpx, "post", fake_post)
     out = gemini.generate([{"role": "user", "parts": [{"text": "hi"}]}])
-    assert out == "Hello there"
+    assert out.text == "Hello there" and out.function_call is None
     assert captured["url"].endswith("/models/gemini-test:generateContent")
     assert captured["headers"]["x-goog-api-key"] == "secret-key"
     assert "secret-key" not in captured["url"]
     assert "systemInstruction" in captured["json"]
+    assert "tools" not in captured["json"]
     assert captured["json"]["contents"][0]["role"] == "user"
 
 
@@ -109,9 +116,9 @@ def test_gemini_http_error_includes_googles_message(monkeypatch):
 
 def test_images_attach_to_last_user_turn_only():
     rows = [
-        SimpleNamespace(sender="USER", body="old", media_refs=["x"]),
-        SimpleNamespace(sender="BOT", body="ok", media_refs=[]),
-        SimpleNamespace(sender="USER", body="", media_refs=["y"]),
+        SimpleNamespace(sender="USER", body="old", media_ids=["x"]),
+        SimpleNamespace(sender="BOT", body="ok", media_ids=[]),
+        SimpleNamespace(sender="USER", body="", media_ids=["y"]),
     ]
     contents = build_contents(rows, images=[("image/jpeg", b"\xff\xd8abc")])
     assert contents[0]["parts"] == [{"text": "old [photo attached]"}]
@@ -123,3 +130,50 @@ def test_images_attach_to_last_user_turn_only():
 def test_echo_mentions_photos():
     reply = service.respond([row("USER", "look")], "look", images=[("image/jpeg", b"1")] * 2)
     assert reply.text == "Echo: look (received 2 photos)"
+
+
+def test_gemini_client_sends_tools_and_parses_function_call(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    captured = {}
+    reply = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"text": "thinking...", "thought": True},
+                        {"text": "Creating it."},
+                        {"functionCall": {"name": "create_repair_ticket", "args": {"a": 1}}},
+                    ]
+                }
+            }
+        ]
+    }
+
+    def fake_post(url, headers, json, timeout):
+        captured.update(json=json)
+        return FakeResponse(reply)
+
+    monkeypatch.setattr(gemini.httpx, "post", fake_post)
+    out = gemini.generate([], tools=[{"name": "create_repair_ticket"}], note="ticket #1 exists")
+    assert out.text == "Creating it."
+    assert out.function_call == gemini.FunctionCall("create_repair_ticket", {"a": 1})
+    assert captured["json"]["tools"] == [
+        {"functionDeclarations": [{"name": "create_repair_ticket"}]}
+    ]
+    assert "ticket #1 exists" in captured["json"]["systemInstruction"]["parts"][0]["text"]
+
+
+def test_service_returns_ticket_request_from_function_call(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    call = gemini.FunctionCall("create_repair_ticket", {"category": "HVAC"})
+    monkeypatch.setattr(gemini, "generate", lambda c, **kw: gemini.GeminiResult("", call))
+    reply = service.respond([row("USER", "yes")], "yes")
+    assert reply.ticket_request == {"category": "HVAC"} and reply.text == ""
+
+
+def test_service_ignores_unknown_function_calls(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    call = gemini.FunctionCall("delete_everything", {})
+    monkeypatch.setattr(gemini, "generate", lambda c, **kw: gemini.GeminiResult("", call))
+    reply = service.respond([row("USER", "yes")], "yes")
+    assert reply.ticket_request is None and reply.source == "fallback"

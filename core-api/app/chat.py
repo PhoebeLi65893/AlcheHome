@@ -14,6 +14,7 @@ from app.auth import current_user
 from app.db import shared_engine
 from app.media import owned_uploads
 from app.storage import get_storage
+from app.tickets.service import CARD_COLUMNS, TicketCard, card_from_row, create_from_tool
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -43,6 +44,7 @@ class MessageOut(BaseModel):
     created_at: datetime
     flag: str | None = None
     media_ids: list[str] = []
+    ticket: TicketCard | None = None
 
 
 class ChatOut(BaseModel):
@@ -70,7 +72,7 @@ def active_conversation(conn, user_id) -> str:
     )
 
 
-def _message(row) -> MessageOut:
+def _message(row, ticket: TicketCard | None = None) -> MessageOut:
     return MessageOut(
         id=str(row.id),
         sender=row.sender,
@@ -78,16 +80,26 @@ def _message(row) -> MessageOut:
         created_at=row.created_at,
         flag=row.flag,
         media_ids=list(row.media_refs or []),
+        ticket=ticket,
     )
 
 
-def _store(conn, conversation_id: str, sender: str, body: str, flag: str | None = None, media=()):
+def _store(
+    conn,
+    conversation_id: str,
+    sender: str,
+    body: str,
+    flag: str | None = None,
+    media=(),
+    ticket: TicketCard | None = None,
+):
     # clock_timestamp() (not now()) so the user message and bot reply get different
     # timestamps and keep their order.
     row = conn.execute(
         text(
-            "INSERT INTO messages (conversation_id, sender, body, flag, media_refs, created_at) "
-            "VALUES (:c, :s, :b, :f, CAST(:m AS jsonb), clock_timestamp()) "
+            "INSERT INTO messages "
+            "(conversation_id, sender, body, flag, media_refs, ticket_id, created_at) "
+            "VALUES (:c, :s, :b, :f, CAST(:m AS jsonb), :t, clock_timestamp()) "
             "RETURNING id, sender, body, flag, media_refs, created_at"
         ),
         {
@@ -96,29 +108,68 @@ def _store(conn, conversation_id: str, sender: str, body: str, flag: str | None 
             "b": body,
             "f": flag,
             "m": json.dumps([str(m) for m in media]),
+            "t": ticket.id if ticket else None,
         },
     ).one()
-    return _message(row)
+    return _message(row, ticket)
 
 
-def _recent(conn, conversation_id: str, limit: int):
-    return conn.execute(
+def _recent(conn, conversation_id: str, limit: int) -> list[MessageOut]:
+    """The newest `limit` messages, oldest first, each with its ticket card (current status)."""
+    rows = conn.execute(
         text(
-            "SELECT id, sender, body, flag, media_refs, created_at FROM ("
-            "  SELECT id, sender, body, flag, media_refs, created_at FROM messages "
-            "  WHERE conversation_id = :c ORDER BY created_at DESC LIMIT :l"
-            ") recent ORDER BY created_at"
+            f"SELECT m.*, {CARD_COLUMNS} FROM ("
+            "  SELECT id AS msg_id, sender, body, flag, media_refs, ticket_id, created_at "
+            "  FROM messages WHERE conversation_id = :c ORDER BY created_at DESC LIMIT :l"
+            ") m LEFT JOIN tickets t ON t.id = m.ticket_id ORDER BY m.created_at"
         ),
         {"c": conversation_id, "l": limit},
     ).all()
+    return [
+        MessageOut(
+            id=str(r.msg_id),
+            sender=r.sender,
+            body=r.body,
+            created_at=r.created_at,
+            flag=r.flag,
+            media_ids=list(r.media_refs or []),
+            ticket=card_from_row(r) if r.ticket_id else None,
+        )
+        for r in rows
+    ]
+
+
+def _conversation_ticket(conn, conversation_id: str) -> int | None:
+    return conn.execute(
+        text(
+            "SELECT t.ticket_number FROM conversations c JOIN tickets t ON t.id = c.ticket_id "
+            "WHERE c.id = :c"
+        ),
+        {"c": conversation_id},
+    ).scalar()
 
 
 @router.get("/messages", response_model=ChatOut)
 def history(user: User, limit: Annotated[int, Query(ge=1, le=200)] = 100):
     with shared_engine().begin() as conn:
         cid = active_conversation(conn, user["id"])
-        rows = _recent(conn, cid, limit)
-    return ChatOut(conversation_id=cid, messages=[_message(r) for r in rows])
+        messages = _recent(conn, cid, limit)
+    return ChatOut(conversation_id=cid, messages=messages)
+
+
+@router.post("/new", response_model=ChatOut, status_code=201)
+def new_conversation(user: User):
+    """Close the current conversation and start an empty one (for a different problem)."""
+    with shared_engine().begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE conversations SET status = 'CLOSED' "
+                "WHERE user_id = :u AND channel = 'WEB' AND status = 'ACTIVE'"
+            ),
+            {"u": user["id"]},
+        )
+        cid = active_conversation(conn, user["id"])
+    return ChatOut(conversation_id=cid, messages=[])
 
 
 @router.post("/messages", response_model=ChatOut, status_code=201)
@@ -131,6 +182,7 @@ def send(body: MessageIn, user: User):
         cid = active_conversation(conn, user["id"])
         mine = _store(conn, cid, "USER", body.body, media=body.media_ids)
         context = _recent(conn, cid, MAX_TURNS)
+        existing_ticket = _conversation_ticket(conn, cid)
     # Step 2: load the photo bytes and ask the agent. This can take seconds, so no
     # database transaction is held open.
     storage = get_storage()
@@ -140,10 +192,22 @@ def send(body: MessageIn, user: User):
             images.append((u.mime_type, storage.load(u.storage_key)))
         except OSError:
             logger.warning("Upload %s missing from storage; sending text only", u.id)
-    reply = agent.respond(context, body.body, images)
-    # Step 3: save the reply.
+    reply = agent.respond(context, body.body, images, existing_ticket=existing_ticket)
+    # Step 3: run the ticket tool if the agent asked for it, then save the reply.
     with shared_engine().begin() as conn:
+        text_out, ticket = reply.text, None
+        if reply.ticket_request is not None:
+            outcome = create_from_tool(
+                conn, user["id"], cid, reply.ticket_request, actor=f"agent:{reply.source}"
+            )
+            ticket = outcome.ticket
+            text_out = f"{reply.text}\n\n{outcome.message}" if reply.text else outcome.message
         bot_msg = _store(
-            conn, cid, "BOT", reply.text, flag="EMERGENCY" if reply.emergency else None
+            conn,
+            cid,
+            "BOT",
+            text_out,
+            flag="EMERGENCY" if reply.emergency else None,
+            ticket=ticket,
         )
     return ChatOut(conversation_id=cid, messages=[mine, bot_msg])

@@ -97,9 +97,9 @@ def test_photo_is_sent_to_gemini_inline_and_later_only_as_a_note(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     calls = []
 
-    def fake(contents):
+    def fake(contents, **kw):
         calls.append(contents)
-        return "I can see water damage. Severity: Medium"
+        return gemini.GeminiResult("I can see water damage. Severity: Medium")
 
     monkeypatch.setattr(gemini, "generate", fake)
     h = signed_in()
@@ -142,7 +142,9 @@ def test_message_limits():
 
 def test_emergency_text_with_photo_still_skips_gemini(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
-    monkeypatch.setattr(gemini, "generate", lambda c: pytest.fail("Gemini must not be called"))
+    monkeypatch.setattr(
+        gemini, "generate", lambda c, **kw: pytest.fail("Gemini must not be called")
+    )
     h = signed_in()
     upload_id = upload(h).json()["id"]
     r = client.post(
