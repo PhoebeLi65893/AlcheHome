@@ -70,6 +70,19 @@ not found, set `GEMINI_MODEL` to a current one (see https://ai.google.dev/gemini
 - If Gemini fails, the user gets a short apology that repeats the 911 reminder, and the chat keeps working.
 - Do not use real personal data while testing: messages are sent to Google's API.
 
+## T7 demo: photo upload and image analysis
+
+In the chat, click **Photo**, pick up to 3 JPEG/PNG/WebP photos (10 MB each), add a note if you like, and send.
+
+- `POST /media` (multipart field `file`) checks the file really is an image, re-encodes it as JPEG,
+  removes EXIF metadata (including the GPS location phones add), fixes rotation and shrinks it to at most
+  1600 px. `GET /media/{id}` returns it, only to its owner.
+- `POST /chat/messages` accepts `{"body": "...", "media_ids": ["..."]}`. The photos of the newest message are
+  sent to Gemini, which describes what it sees, names the likely issue and gives `Severity: Low/Medium/High/Emergency`.
+  Earlier photos are only mentioned as `[photo attached]` to keep requests small.
+- Storage: a Docker volume (`media`) locally; the Cloud Storage bucket from T3 in the cloud (`MEDIA_BACKEND=gcs`).
+- Without a Gemini key the echo bot answers "(received 1 photo)".
+
 ## Develop without Docker (needs a local Postgres with pgvector; set DATABASE_URL)
 
 ```bash

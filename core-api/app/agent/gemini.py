@@ -19,7 +19,7 @@ def generate(contents: list[dict]) -> str:
         json={
             "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": contents,
-            "generationConfig": {"temperature": 0.4, "maxOutputTokens": 1024},
+            "generationConfig": {"temperature": 0.4, "maxOutputTokens": 2048},
         },
         timeout=s.gemini_timeout_s,
     )

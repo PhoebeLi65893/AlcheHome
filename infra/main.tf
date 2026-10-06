@@ -18,6 +18,8 @@ locals {
     DB_USER                  = google_sql_user.app.name
     DB_NAME                  = google_sql_database.app.name
     INSTANCE_CONNECTION_NAME = google_sql_database_instance.pg.connection_name
+    MEDIA_BACKEND            = "gcs"
+    MEDIA_BUCKET             = google_storage_bucket.media.name
   }
 }
 

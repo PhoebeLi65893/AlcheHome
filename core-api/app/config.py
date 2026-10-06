@@ -17,8 +17,12 @@ class Settings:
     facebook_app_id: str = ""
     facebook_app_secret: str = ""
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.5-flash"
     gemini_timeout_s: float = 20.0
+    media_backend: str = "local"
+    media_dir: str = "./media-data"
+    media_bucket: str = ""
+    max_upload_bytes: int = 10 * 1024 * 1024
 
 
 def get_settings() -> Settings:
@@ -41,6 +45,10 @@ def get_settings() -> Settings:
         facebook_app_id=os.getenv("FACEBOOK_APP_ID") or "",
         facebook_app_secret=os.getenv("FACEBOOK_APP_SECRET") or "",
         gemini_api_key=os.getenv("GEMINI_API_KEY") or "",
-        gemini_model=os.getenv("GEMINI_MODEL") or "gemini-2.5-flash",
+        gemini_model=os.getenv("GEMINI_MODEL") or "gemini-3.5-flash",
         gemini_timeout_s=float(os.getenv("GEMINI_TIMEOUT_S") or 20),
+        media_backend=(os.getenv("MEDIA_BACKEND") or "local").lower(),
+        media_dir=os.getenv("MEDIA_DIR") or "./media-data",
+        media_bucket=os.getenv("MEDIA_BUCKET") or "",
+        max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES") or 10 * 1024 * 1024),
     )

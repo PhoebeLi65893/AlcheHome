@@ -40,7 +40,11 @@ services:
       FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
       FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      MEDIA_BACKEND: local
+      MEDIA_DIR: /data/media
+    volumes:
+      - media:/data/media
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -59,3 +63,4 @@ services:
 
 volumes:
   pgdata:
+  media:

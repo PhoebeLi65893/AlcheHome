@@ -105,3 +105,21 @@ def test_gemini_http_error_includes_googles_message(monkeypatch):
     with pytest.raises(gemini.GeminiError, match="HTTP 404: models/nope is not found") as info:
         gemini.generate([{"role": "user", "parts": [{"text": "x"}]}])
     assert "super-secret-key" not in str(info.value)
+
+
+def test_images_attach_to_last_user_turn_only():
+    rows = [
+        SimpleNamespace(sender="USER", body="old", media_refs=["x"]),
+        SimpleNamespace(sender="BOT", body="ok", media_refs=[]),
+        SimpleNamespace(sender="USER", body="", media_refs=["y"]),
+    ]
+    contents = build_contents(rows, images=[("image/jpeg", b"\xff\xd8abc")])
+    assert contents[0]["parts"] == [{"text": "old [photo attached]"}]
+    last = contents[-1]["parts"]
+    assert last[0] == {"text": "[photo attached]"}
+    assert last[1]["inline_data"]["mime_type"] == "image/jpeg"
+
+
+def test_echo_mentions_photos():
+    reply = service.respond([row("USER", "look")], "look", images=[("image/jpeg", b"1")] * 2)
+    assert reply.text == "Echo: look (received 2 photos)"
