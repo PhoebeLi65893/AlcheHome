@@ -24,6 +24,8 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
 .bubble{max-width:80%;padding:8px 12px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word}
 .USER{align-self:flex-end;background:#2b5c8f;color:#fff;border-bottom-right-radius:4px}
 .BOT{align-self:flex-start;background:#e8edf3;border-bottom-left-radius:4px}
+.EMERGENCY{background:#fdecea;border:2px solid #b42318;color:#7a1b12;font-weight:600;max-width:95%}
+.pending{opacity:.6;font-style:italic}
 .empty{color:#94a3b8;text-align:center;margin:auto}
 #composer{display:flex;gap:8px;margin-top:10px}
 #composer input{margin:0}#composer button{width:90px;margin:0}
@@ -131,14 +133,15 @@ async function loadProfile() {
   $('who').textContent = me.display_name || me.email || 'Signed in';
 }
 
-function addBubble(m) {
+function addBubble(m, extra) {
   const empty = document.querySelector('#chat .empty');
   if (empty) empty.remove();
   const d = document.createElement('div');
-  d.className = 'bubble ' + m.sender;
+  d.className = 'bubble ' + m.sender + (m.flag === 'EMERGENCY' ? ' EMERGENCY' : '') + (extra ? ' ' + extra : '');
   d.textContent = m.body;            // textContent: message text is never interpreted as HTML
   $('chat').appendChild(d);
   $('chat').scrollTop = $('chat').scrollHeight;
+  return d;
 }
 
 async function loadChat() {
@@ -150,20 +153,28 @@ async function loadChat() {
     e.textContent = 'No messages yet. Say hello!';
     $('chat').appendChild(e);
   }
-  data.messages.forEach(addBubble);
+  data.messages.forEach(m => addBubble(m));
 }
 
 async function sendMessage() {
   const input = $('text'), body = input.value.trim();
   if (!body) return;
   $('send').disabled = true; msg();
+  // Show the message and a "thinking" bubble right away; the real ones replace them.
+  const mine = addBubble({ sender: 'USER', body }, 'pending');
+  const thinking = addBubble({ sender: 'BOT', body: 'Thinking...' }, 'pending');
+  input.value = '';
   try {
     const data = await authed('/chat/messages', {
       method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ body })
     });
-    input.value = '';
-    data.messages.forEach(addBubble);
-  } catch (e) { msg(e.message); }
+    mine.remove(); thinking.remove();
+    data.messages.forEach(m => addBubble(m));
+  } catch (e) {
+    mine.remove(); thinking.remove();
+    input.value = body;               // give the text back so nothing is lost
+    msg(e.message);
+  }
   $('send').disabled = false; input.focus();
 }
 
@@ -173,7 +184,11 @@ async function showApp() {
     $('signedOut').classList.add('hide');
     $('signedIn').classList.remove('hide');
     await loadChat();
-  } catch (e) { signOutLocally(e.status === 401 ? 'Please sign in again' : e.message); }
+  } catch (e) {
+    console.error('showApp failed', e);
+    if (e.status === 401) signOutLocally('Please sign in again (' + e.message + ')');
+    else msg('Signed in, but loading failed: ' + e.message + (e.status ? ' (HTTP ' + e.status + ')' : ''));
+  }
 }
 
 async function logout() {
@@ -196,6 +211,7 @@ function signOutLocally(m) {
 $('text').addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
 (function init() {
+  const hadHash = location.hash.length > 1;
   const params = new URLSearchParams(location.hash.slice(1));
   history.replaceState(null, '', location.pathname);   // remove tokens from the address bar
   if (params.get('error')) {
@@ -204,6 +220,8 @@ $('text').addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(
   } else if (params.get('access_token')) {
     saveTokens({ access_token: params.get('access_token'), refresh_token: params.get('refresh_token') });
   }
+  else if (hadHash) msg('Unexpected sign-in response: no tokens were returned');
+  console.log('init: hash present =', hadHash, '| has access token =', !!store.get('access'));
   if (store.get('access')) showApp();
 })();
 </script>

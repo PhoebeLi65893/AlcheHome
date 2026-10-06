@@ -16,6 +16,9 @@ class Settings:
     google_client_secret: str = ""
     facebook_app_id: str = ""
     facebook_app_secret: str = ""
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_timeout_s: float = 20.0
 
 
 def get_settings() -> Settings:
@@ -37,4 +40,7 @@ def get_settings() -> Settings:
         google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET") or "",
         facebook_app_id=os.getenv("FACEBOOK_APP_ID") or "",
         facebook_app_secret=os.getenv("FACEBOOK_APP_SECRET") or "",
+        gemini_api_key=os.getenv("GEMINI_API_KEY") or "",
+        gemini_model=os.getenv("GEMINI_MODEL") or "gemini-2.5-flash",
+        gemini_timeout_s=float(os.getenv("GEMINI_TIMEOUT_S") or 20),
     )

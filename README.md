@@ -57,6 +57,19 @@ API: `GET /chat/messages` (history, creates your single ACTIVE web conversation 
 docker compose exec db psql -U alche alche -c "SELECT sender, body, created_at FROM messages ORDER BY created_at DESC LIMIT 10"
 ```
 
+## T6 demo: Gemini intake and emergency safety rules
+
+Get an API key at https://aistudio.google.com and put `GEMINI_API_KEY=...` in `.env`, then `docker compose up -d --build`.
+Without a key the chat falls back to the T5 echo bot. Model names change over time: if the API reports the model is
+not found, set `GEMINI_MODEL` to a current one (see https://ai.google.dev/gemini-api/docs/models).
+
+- The safety layer (`app/agent/safety.py`) checks every message first with fixed rules (gas, carbon monoxide, fire,
+  sparking wiring, water near electricity, structural collapse). A match returns fixed 911 guidance instantly,
+  never calls Gemini, and is stored with `messages.flag = 'EMERGENCY'` (shown in red).
+- Otherwise the last 20 messages go to Gemini Flash with the intake instructions in `app/agent/prompt.py`.
+- If Gemini fails, the user gets a short apology that repeats the 911 reminder, and the chat keeps working.
+- Do not use real personal data while testing: messages are sent to Google's API.
+
 ## Develop without Docker (needs a local Postgres with pgvector; set DATABASE_URL)
 
 ```bash
