@@ -21,7 +21,7 @@ if not _log.handlers:
     _log.addHandler(_handler)
     _log.setLevel(logging.INFO)
 
-app = FastAPI(title="Alche Home Core API", version="0.6.0")
+app = FastAPI(title="Alche Home Core API", version="0.7.0")
 
 app.add_middleware(
     CORSMiddleware,

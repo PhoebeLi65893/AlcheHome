@@ -138,3 +138,13 @@ uvicorn app.main:app --reload
 ## CI
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint, format check, tests and a Docker build with a `/health` smoke test on every push to `main` and every pull request.
+
+## T10 demo: handyman matching
+
+`core-api/app/matching.py` filters handymen (has the skill, covers the ticket ZIP, available, verified) and ranks them
+by `0.4*proximity + 0.3*rating + 0.2*response_rate + 0.1*urgency_fit`. Print the ranking for any ticket:
+
+```bash
+docker compose run --rm core-api python -m scripts.seed
+docker compose exec core-api python -m scripts.rank_handymen 1024
+```
