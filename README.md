@@ -148,3 +148,16 @@ by `0.4*proximity + 0.3*rating + 0.2*response_rate + 0.1*urgency_fit`. Print the
 docker compose run --rm core-api python -m scripts.seed
 docker compose exec core-api python -m scripts.rank_handymen 1024
 ```
+
+## T11 demo: dispatch by SMS
+
+New tickets stay OPEN until dispatch starts. Start it by hand (or set `DISPATCH_AUTO=true` for automatic dispatch):
+
+```bash
+docker compose exec core-api python -m scripts.dispatch_ticket 1024
+docker compose exec core-api python -m scripts.sim_sms "+16195550101" "ACCEPT 1024"   # handyman replies
+```
+
+One offer is out at a time (expires after 3 min / 15 min / 2 h for emergency / same-day / flexible, or `DISPATCH_TIMEOUT_S`).
+Decline or timeout moves to the next-ranked handyman; after 5 offers or no candidates the ticket becomes UNMATCHED.
+Handymen reply `ACCEPT 1024` or `DECLINE 1024`; ACCEPT moves the ticket to ASSIGNED. The offer shows the ZIP only.

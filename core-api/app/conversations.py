@@ -14,6 +14,7 @@ from sqlalchemy import text
 
 from app.agent import service as agent
 from app.agent.context import MAX_TURNS
+from app.config import get_settings
 from app.db import shared_engine
 from app.storage import get_storage
 from app.tickets.service import CARD_COLUMNS, TicketCard, card_from_row, create_from_tool
@@ -205,4 +206,8 @@ def run_turn(
             flag="EMERGENCY" if reply.emergency else None,
             ticket=ticket,
         )
+    if ticket is not None and ticket.status == "OPEN" and get_settings().dispatch_auto:
+        from app.dispatch import start_dispatch  # local import: dispatch imports this module
+
+        start_dispatch(ticket.id)
     return Turn(conversation_id=cid, mine=mine, bot=bot)

@@ -66,13 +66,14 @@ def rank(candidates: list[Candidate], urgency: str, zip_code: str) -> list[Ranke
 
 
 def find_candidates(conn, category: str, zip_code: str) -> list[Candidate]:
-    """Verified, available handymen with the skill who cover the ZIP."""
+    """Verified, available, not opted-out handymen with the skill who cover the ZIP."""
     rows = conn.execute(
         text(
             "SELECT h.user_id, h.display_name, h.service_zips, h.rating_avg, h.response_rate "
             "FROM handymen h JOIN handymen_skills s ON s.handyman_id = h.user_id "
+            "JOIN users u ON u.id = h.user_id "
             "WHERE s.category = :c AND :z = ANY(h.service_zips) "
-            "AND h.is_available AND h.verified_at IS NOT NULL"
+            "AND h.is_available AND h.verified_at IS NOT NULL AND NOT u.sms_opted_out"
         ),
         {"c": category, "z": zip_code},
     ).all()

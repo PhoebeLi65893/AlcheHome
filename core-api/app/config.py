@@ -29,6 +29,8 @@ class Settings:
     twilio_auth_token: str = ""
     twilio_from_number: str = ""
     twilio_messaging_service_sid: str = ""
+    dispatch_auto: bool = False
+    dispatch_timeout_s: float = 0.0
 
 
 def get_settings() -> Settings:
@@ -63,4 +65,6 @@ def get_settings() -> Settings:
         twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN") or "",
         twilio_from_number=os.getenv("TWILIO_FROM_NUMBER") or "",
         twilio_messaging_service_sid=os.getenv("TWILIO_MESSAGING_SERVICE_SID") or "",
+        dispatch_auto=(os.getenv("DISPATCH_AUTO") or "").lower() in {"1", "true", "yes"},
+        dispatch_timeout_s=float(os.getenv("DISPATCH_TIMEOUT_S") or 0),
     )

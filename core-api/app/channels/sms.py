@@ -17,6 +17,7 @@ from app.channels import twilio
 from app.config import get_settings
 from app.conversations import active_conversation, close_active, run_turn
 from app.db import shared_engine
+from app.dispatch import deliver, handle_handyman_reply
 from app.images import ImageRejected
 from app.media import save_photo
 
@@ -115,10 +116,16 @@ async def inbound_sms(request: Request, background: BackgroundTasks):
             return twiml()
         if word in HELP_WORDS or user.sms_opted_out:
             return twiml()
+        handyman = user.role == "HANDYMAN"
         if word in NEW_WORDS:
             close_active(conn, user.id, "SMS")
             active_conversation(conn, user.id, "SMS")
             return twiml(NEW_REPLY)
+
+    if handyman:  # job offers: ACCEPT / DECLINE, answered right in the webhook response
+        reply, others = handle_handyman_reply(user.id, body)
+        background.add_task(deliver, others)
+        return twiml(reply)
 
     try:
         num_media = min(int(params.get("NumMedia", "0") or 0), MAX_PHOTOS)
