@@ -1,5 +1,6 @@
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -36,15 +37,21 @@ async def _read_limited(file: UploadFile, limit: int) -> bytes:
     return bytes(data)
 
 
-@router.post("", response_model=UploadOut, status_code=201)
-async def upload(file: UploadFile, user: User):
-    raw = await _read_limited(file, get_settings().max_upload_bytes)
-    try:
-        jpeg, width, height = process(raw)
-    except ImageRejected as e:
-        raise HTTPException(415, str(e)) from None
+@dataclass(frozen=True)
+class SavedUpload:
+    id: uuid.UUID
+    storage_key: str
+    mime_type: str
+    size_bytes: int
+    width: int
+    height: int
+
+
+def save_photo(user_id, raw: bytes) -> SavedUpload:
+    """Validate, normalize and store a photo for a user. Raises ImageRejected."""
+    jpeg, width, height = process(raw)
     upload_id = uuid.uuid4()
-    key = f"uploads/{user['id']}/{upload_id}.jpg"  # built server-side: never from the file name
+    key = f"uploads/{user_id}/{upload_id}.jpg"  # built server-side: never from the file name
     storage = get_storage()
     storage.save(key, jpeg, "image/jpeg")
     try:
@@ -54,20 +61,27 @@ async def upload(file: UploadFile, user: User):
                     "INSERT INTO uploads (id, user_id, storage_key, mime_type, size_bytes, "
                     "width, height) VALUES (:i, :u, :k, 'image/jpeg', :s, :w, :h)"
                 ),
-                {
-                    "i": upload_id,
-                    "u": user["id"],
-                    "k": key,
-                    "s": len(jpeg),
-                    "w": width,
-                    "h": height,
-                },
+                {"i": upload_id, "u": user_id, "k": key, "s": len(jpeg), "w": width, "h": height},
             )
     except Exception:
         storage.delete(key)
         raise
+    return SavedUpload(upload_id, key, "image/jpeg", len(jpeg), width, height)
+
+
+@router.post("", response_model=UploadOut, status_code=201)
+async def upload(file: UploadFile, user: User):
+    raw = await _read_limited(file, get_settings().max_upload_bytes)
+    try:
+        saved = save_photo(user["id"], raw)
+    except ImageRejected as e:
+        raise HTTPException(415, str(e)) from None
     return UploadOut(
-        id=str(upload_id), mime_type="image/jpeg", size_bytes=len(jpeg), width=width, height=height
+        id=str(saved.id),
+        mime_type=saved.mime_type,
+        size_bytes=saved.size_bytes,
+        width=saved.width,
+        height=saved.height,
     )
 
 

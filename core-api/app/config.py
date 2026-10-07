@@ -24,6 +24,11 @@ class Settings:
     media_dir: str = "./media-data"
     media_bucket: str = ""
     max_upload_bytes: int = 10 * 1024 * 1024
+    public_base_url: str = ""
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""
+    twilio_messaging_service_sid: str = ""
 
 
 def get_settings() -> Settings:
@@ -53,4 +58,9 @@ def get_settings() -> Settings:
         media_dir=os.getenv("MEDIA_DIR") or "./media-data",
         media_bucket=os.getenv("MEDIA_BUCKET") or "",
         max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES") or 10 * 1024 * 1024),
+        public_base_url=(os.getenv("PUBLIC_BASE_URL") or "").rstrip("/"),
+        twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID") or "",
+        twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN") or "",
+        twilio_from_number=os.getenv("TWILIO_FROM_NUMBER") or "",
+        twilio_messaging_service_sid=os.getenv("TWILIO_MESSAGING_SERVICE_SID") or "",
     )

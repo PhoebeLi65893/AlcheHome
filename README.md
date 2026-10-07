@@ -102,6 +102,28 @@ conversation. API: `GET /tickets`, `GET /tickets/{id}` (with events and photos),
 `/ticket CATEGORY URGENCY ZIP summary`, e.g. `/ticket plumbing same_day 92101 Kitchen sink dripping under the cabinet`.
 It runs the same validation and creation code as the Gemini tool call.
 
+## T9 demo: SMS through Twilio
+
+`POST /webhooks/twilio/sms` receives texts sent to your Twilio number:
+
+1. It checks the `X-Twilio-Signature` header (HMAC of the public URL and parameters with your auth token).
+   Requests without a valid signature get 403; without `TWILIO_AUTH_TOKEN` the endpoint is off (503).
+2. It records the `MessageSid`, so if Twilio delivers the same message twice it is handled once.
+3. It answers Twilio at once and handles the message afterwards with the same code as the web chat
+   (`app/conversations.py`): safety rules, Gemini, tickets, MMS photos. The reply goes out through Twilio's REST API.
+
+A new phone number becomes a guest customer. Keywords: STOP (and other opt-out words) stops all messages until
+START; HELP is answered by Twilio; NEW starts a new request. Phone numbers are masked in logs.
+
+**Without a Twilio account**: set `TWILIO_AUTH_TOKEN=dev-local-token` in `.env`, `docker compose up -d`, then
+`docker compose exec core-api python -m scripts.sim_sms "+16195550199" "my sink is leaking"`. It sends a correctly
+signed fake webhook and prints the reply that would be texted back.
+
+**With Twilio**: buy a number (the free trial works), run `ngrok http 8000`, set `PUBLIC_BASE_URL` to the ngrok https
+URL and the `TWILIO_*` values in `.env`, `docker compose up -d`, then set the number's "A message comes in" webhook to
+`<ngrok url>/webhooks/twilio/sms` (HTTP POST). Test with Twilio's Virtual Phone in the console, or your own verified
+phone. Texting real US phones from a 10-digit number needs A2P 10DLC registration.
+
 ## Develop without Docker (needs a local Postgres with pgvector; set DATABASE_URL)
 
 ```bash

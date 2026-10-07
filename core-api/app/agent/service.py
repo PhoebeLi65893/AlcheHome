@@ -22,6 +22,11 @@ TICKET_EXISTS_NOTE = (
     "different problem, tell them to tap 'New request'."
 )
 DEV_COMMAND = "/ticket"
+SMS_NOTE = (
+    "The customer is texting by SMS: keep every reply under 300 characters, plain text only. "
+    "When you ask whether to create a repair request, ask them to reply OK (words like YES, "
+    "STOP and HELP are reserved by the SMS provider)."
+)
 
 
 @dataclass(frozen=True)
@@ -39,7 +44,13 @@ def _dev_ticket(latest_text: str) -> dict:
     return dict(zip(keys, parts[1:], strict=False))
 
 
-def respond(history, latest_text: str, images=(), existing_ticket: int | None = None) -> Reply:
+def respond(
+    history,
+    latest_text: str,
+    images=(),
+    existing_ticket: int | None = None,
+    channel: str = "WEB",
+) -> Reply:
     """Produce the bot reply.
 
     `history` is the stored messages, oldest first, newest included. `images` are the photos
@@ -55,7 +66,12 @@ def respond(history, latest_text: str, images=(), existing_ticket: int | None = 
             return Reply("", source="dev", ticket_request=_dev_ticket(latest_text))
         return Reply(bot.reply_to(latest_text, photos=len(images)), source="echo")
     tools = None if existing_ticket else [TOOL_DECLARATION]
-    note = TICKET_EXISTS_NOTE.format(number=existing_ticket) if existing_ticket else ""
+    notes = []
+    if existing_ticket:
+        notes.append(TICKET_EXISTS_NOTE.format(number=existing_ticket))
+    if channel == "SMS":
+        notes.append(SMS_NOTE)
+    note = " ".join(notes)
     try:
         result = gemini.generate(build_contents(history, images), tools=tools, note=note)
     except gemini.GeminiError as e:
