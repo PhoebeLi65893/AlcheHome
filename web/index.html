@@ -33,6 +33,12 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
 .ticket .summary{margin:6px 0 0;font-size:.92rem}
 .ticket button{width:auto;margin:8px 0 0;padding:6px 12px;font-size:.85rem}
 .top .actions{display:flex;gap:8px}
+.picker{margin-top:10px;border-top:1px solid #e2e8f0;padding-top:8px}
+.picker .hint{margin:0 0 6px;font-size:.85rem;color:#64748b}
+.picker .buttons{display:flex;gap:8px;flex-wrap:wrap}
+.picker .opt{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:.88rem}
+.picker .opt button{margin:0}
+.picker .star{color:#15803d;font-weight:700;font-size:.75rem}
 .EMERGENCY{background:#fdecea;border:2px solid #b42318;color:#7a1b12;font-weight:600;max-width:95%}
 .pending{opacity:.6;font-style:italic}
 .empty{color:#94a3b8;text-align:center;margin:auto}
@@ -67,7 +73,7 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
 </section>
 
 <section id="signedIn" class="hide">
-  <div class="top"><span id="who"></span><span class="actions"><button class="alt" onclick="newRequest()" title="Start over for a different problem">New request</button><button class="alt" onclick="logout()">Log out</button></span></div>
+  <div class="top"><span id="who"></span><span class="actions"><button id="create" onclick="createRequest()" title="Turn this chat into a repair request">Create request</button><button class="alt" onclick="newRequest()" title="Start over for a different problem">New request</button><button class="alt" onclick="logout()">Log out</button></span></div>
   <details>
     <summary>Profile (GET /me)</summary>
     <pre id="profile"></pre>
@@ -210,7 +216,92 @@ function ticketCard(t) {
     };
     card.append(b);
   }
+  if (t.status === 'OPEN') card.append(handymanPicker(t, card));
+  else if (t.status === 'UNMATCHED') card.append(el('p', 'summary', 'No handyman is available for ZIP ' + t.location_zip + ' right now. Our team has been alerted and will follow up here.'));
+  else if (t.status === 'MATCHING') {
+    const p = el('p', 'summary', 'Looking for a handyman. This can take a few minutes.');
+    card.append(p);
+    watchTicket(t, card, p);
+  } else if (t.status === 'ASSIGNED') card.append(el('p', 'summary', (t.handyman_name || 'A handyman') + ' has accepted your request and will be in touch.'));
   return card;
+}
+
+// While we are looking for a handyman, show progress and update the card when something changes.
+function watchTicket(t, card, p) {
+  const tick = async () => {
+    if (!card.isConnected) return clearInterval(timer);
+    try {
+      const d = await authed('/tickets/' + t.id);
+      if (d.status !== 'MATCHING') {
+        clearInterval(timer);
+        await loadChat();             // the status message from the assistant is in the chat now
+        return;
+      }
+      let txt = 'Looking for a handyman.';
+      if (d.offers_sent) {
+        txt += ' Asked ' + d.offers_sent + ' of up to ' + d.max_offers + '.';
+        if (d.offer_expires_at) {
+          const mins = Math.max(0, Math.ceil((new Date(d.offer_expires_at) - Date.now()) / 60000));
+          txt += ' Waiting for a reply (' + mins + ' min left before we ask the next one).';
+        }
+      }
+      p.textContent = txt;
+    } catch (e) { /* keep trying; the next tick may work */ }
+  };
+  const timer = setInterval(tick, 5000);
+  tick();
+}
+
+// Lets the customer pick a handyman, or have us pick (best ranked first, then the next, until one accepts).
+function handymanPicker(t, card) {
+  const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+  const box = el('div', 'picker');
+  const list = el('div');
+  const start = async (handyman_id, btn) => {
+    btn.disabled = true; msg();
+    try {
+      const body = JSON.stringify(handyman_id ? { handyman_id } : {});
+      const updated = await authed('/tickets/' + t.id + '/dispatch', { method: 'POST', headers: JSON_HEADERS, body });
+      card.replaceWith(ticketCard(updated));
+      if (updated.status === 'UNMATCHED') msg('We could not find an available handyman for this request.');
+    } catch (e) { msg(e.message); btn.disabled = false; }
+  };
+  const auto = el('button', null, 'Find me a handyman');
+  auto.title = 'We ask the best match first, then the next, until someone accepts';
+  auto.onclick = () => start(null, auto);
+  const choose = el('button', 'alt', 'Choose a handyman');
+  choose.onclick = async () => {
+    choose.disabled = true; msg();
+    try {
+      const opts = await authed('/tickets/' + t.id + '/handymen');
+      list.replaceChildren(...(opts.length ? opts.map(o => {
+        const row = el('div', 'opt');
+        const info = el('span', null, o.display_name + ' · ' + o.rating_avg.toFixed(1) + ' stars · ' + Math.round(o.response_rate * 100) + '% reply rate ');
+        if (o.recommended) info.append(el('span', 'star', 'Best match'));
+        const pick = el('button', 'alt', 'Choose');
+        pick.onclick = () => start(o.handyman_id, pick);
+        row.append(info, pick);
+        return row;
+      }) : [el('p', 'hint', 'No handyman covers ZIP ' + t.location_zip + ' right now. Tap Find me a handyman and our team will follow up.')]));
+    } catch (e) { msg(e.message); }
+    choose.disabled = false;
+  };
+  const buttons = el('div', 'buttons');
+  buttons.append(auto, choose);
+  box.append(el('p', 'hint', 'Next: pick a handyman, or let us choose. If yours is busy we move on to the next best match.'), buttons, list);
+  return box;
+}
+
+async function createRequest() {
+  const btn = $('create');
+  btn.disabled = true; msg();
+  const thinking = addBubble({ sender: 'BOT', body: 'Working on your request...' }, 'pending');
+  try {
+    const data = await authed('/chat/request-ticket', { method: 'POST' });
+    thinking.remove();
+    data.messages.forEach(m => addBubble(m));
+  } catch (e) { thinking.remove(); msg(e.message); }
+  btn.disabled = false;
 }
 
 async function newRequest() {

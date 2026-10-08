@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.admin import router as admin_router
 from app.auth import current_user
 from app.auth import router as auth_router
 from app.channels.sms import router as sms_router
@@ -47,7 +48,7 @@ async def lifespan(_app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="Alche Home Core API", version="0.8.0", lifespan=lifespan)
+app = FastAPI(title="Alche Home Core API", version="0.10.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,6 +61,7 @@ app.include_router(chat_router)
 app.include_router(media_router)
 app.include_router(tickets_router)
 app.include_router(sms_router)
+app.include_router(admin_router)
 
 
 @app.get("/health")

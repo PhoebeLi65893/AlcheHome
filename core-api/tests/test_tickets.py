@@ -31,6 +31,11 @@ def signed_in():
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+def request(h):
+    """Press the Create request button."""
+    return client.post("/chat/request-ticket", headers=h)
+
+
 def say(h, body="yes please", media_ids=()):
     return client.post(
         "/chat/messages", json={"body": body, "media_ids": list(media_ids)}, headers=h
@@ -60,12 +65,15 @@ def tool_call(args=None, text_=""):
     return gemini.GeminiResult(text_, gemini.FunctionCall(TOOL_NAME, dict(args or ARGS)))
 
 
-def test_tool_is_offered_and_creates_open_ticket_with_card(gemini_calls):
+def test_tool_is_withheld_while_chatting_and_offered_on_create_request(gemini_calls):
     h = signed_in()
     say(h, "my kitchen sink drips, 92101, today please")
-    assert gemini_calls.calls[0]["tools"][0]["name"] == TOOL_NAME
+    assert gemini_calls.calls[0]["tools"] is None
+    assert "Create request button" in gemini_calls.calls[0]["note"]
     gemini_calls.next = tool_call(text_="Great, creating it now.")
-    r = say(h, "yes please")
+    r = request(h)
+    assert gemini_calls.calls[-1]["tools"][0]["name"] == TOOL_NAME
+    assert "pressed the Create request button" in gemini_calls.calls[-1]["note"]
     bot = r.json()["messages"][1]
     card = bot["ticket"]
     assert card["status"] == "OPEN" and card["category"] == "PLUMBING"
@@ -92,7 +100,7 @@ def test_tool_is_offered_and_creates_open_ticket_with_card(gemini_calls):
 def test_ticket_card_survives_reload_with_current_status(gemini_calls):
     h = signed_in()
     gemini_calls.next = tool_call()
-    ticket_id = say(h).json()["messages"][1]["ticket"]["id"]
+    ticket_id = request(h).json()["messages"][1]["ticket"]["id"]
     client.post(f"/tickets/{ticket_id}/cancel", headers=h)
     history = client.get("/chat/messages", headers=h).json()["messages"]
     assert history[1]["ticket"]["status"] == "CANCELLED"
@@ -102,7 +110,7 @@ def test_ticket_card_survives_reload_with_current_status(gemini_calls):
 def test_invalid_tool_arguments_create_nothing_and_ask_for_details(gemini_calls):
     h = signed_in()
     gemini_calls.next = tool_call({**ARGS, "location_zip": "unknown"})
-    bot = say(h).json()["messages"][1]
+    bot = request(h).json()["messages"][1]
     assert bot["ticket"] is None
     assert "5-digit ZIP code" in bot["body"]
     assert client.get("/tickets", headers=h).json() == []
@@ -111,7 +119,7 @@ def test_invalid_tool_arguments_create_nothing_and_ask_for_details(gemini_calls)
 def test_after_a_ticket_the_tool_is_withheld_and_duplicates_refused(gemini_calls):
     h = signed_in()
     gemini_calls.next = tool_call()
-    first = say(h).json()["messages"][1]["ticket"]
+    first = request(h).json()["messages"][1]["ticket"]
     gemini_calls.next = gemini.GeminiResult("It's in the queue.")
     say(h, "any update?")
     last = gemini_calls.calls[-1]
@@ -119,7 +127,7 @@ def test_after_a_ticket_the_tool_is_withheld_and_duplicates_refused(gemini_calls
     assert f"#{first['number']}" in last["note"]
     # Even if the model calls the tool anyway, no second ticket is made.
     gemini_calls.next = tool_call()
-    bot = say(h, "make another").json()["messages"][1]
+    bot = request(h).json()["messages"][1]
     assert bot["ticket"]["id"] == first["id"]
     assert "already has repair request" in bot["body"]
     assert len(client.get("/tickets", headers=h).json()) == 1
@@ -128,13 +136,13 @@ def test_after_a_ticket_the_tool_is_withheld_and_duplicates_refused(gemini_calls
 def test_new_request_starts_fresh_conversation_allowing_another_ticket(gemini_calls):
     h = signed_in()
     gemini_calls.next = tool_call()
-    first = say(h).json()
+    first = request(h).json()
     r = client.post("/chat/new", headers=h)
     assert r.status_code == 201 and r.json()["messages"] == []
     assert r.json()["conversation_id"] != first["conversation_id"]
     assert client.get("/chat/messages", headers=h).json()["messages"] == []
     gemini_calls.next = tool_call({**ARGS, "category": "ELECTRICAL"})
-    say(h)
+    request(h)
     cats = sorted(t["category"] for t in client.get("/tickets", headers=h).json())
     assert cats == ["ELECTRICAL", "PLUMBING"]
 
@@ -146,7 +154,7 @@ def test_photos_from_the_conversation_are_attached_to_the_ticket(gemini_calls):
     gemini_calls.next = gemini.GeminiResult("I see a leak. Severity: Medium")
     say(h, "look", media_ids=[upload_id])
     gemini_calls.next = tool_call()
-    ticket_id = say(h).json()["messages"][1]["ticket"]["id"]
+    ticket_id = request(h).json()["messages"][1]["ticket"]["id"]
     detail = client.get(f"/tickets/{ticket_id}", headers=h).json()
     assert detail["media_ids"] == [upload_id]
     assert [e["to_status"] for e in detail["events"]] == ["DRAFT", "OPEN"]
@@ -155,7 +163,7 @@ def test_photos_from_the_conversation_are_attached_to_the_ticket(gemini_calls):
 def test_ticket_privacy_and_cancel_rules(gemini_calls):
     owner, stranger = signed_in(), signed_in()
     gemini_calls.next = tool_call()
-    ticket_id = say(owner).json()["messages"][1]["ticket"]["id"]
+    ticket_id = request(owner).json()["messages"][1]["ticket"]["id"]
     assert client.get(f"/tickets/{ticket_id}", headers=stranger).status_code == 404
     assert client.post(f"/tickets/{ticket_id}/cancel", headers=stranger).status_code == 404
     assert client.get("/tickets", headers=stranger).json() == []
@@ -195,3 +203,34 @@ def test_dev_ticket_command_disabled_outside_local(monkeypatch):
     bot = say(h, "/ticket electrical flexible 92103 Bedroom outlet stopped working").json()
     assert bot["messages"][1]["ticket"] is None
     assert bot["messages"][1]["body"].startswith("Echo:")
+
+
+def test_missing_details_are_asked_after_the_button_then_ticket_follows(gemini_calls):
+    h = signed_in()
+    say(h, "my kitchen sink drips")
+    gemini_calls.next = gemini.GeminiResult("Sure. What is your ZIP code, and how urgent is it?")
+    first = request(h).json()["messages"]
+    assert first[0]["body"] == "Create a repair request."
+    assert first[1]["ticket"] is None and "ZIP" in first[1]["body"]
+    assert client.get("/tickets", headers=h).json() == []
+    # The customer answers in plain chat: no second button press is needed.
+    gemini_calls.next = tool_call(text_="Thanks!")
+    bot = say(h, "92101, today please").json()["messages"][1]
+    assert gemini_calls.calls[-1]["tools"][0]["name"] == TOOL_NAME
+    assert bot["ticket"]["status"] == "OPEN"
+
+
+def test_request_flag_resets_with_a_new_conversation(gemini_calls):
+    h = signed_in()
+    gemini_calls.next = gemini.GeminiResult("What is wrong, and what is your ZIP?")
+    request(h)
+    client.post("/chat/new", headers=h)
+    say(h, "now my heater is noisy")
+    assert gemini_calls.calls[-1]["tools"] is None
+
+
+def test_button_without_gemini_key_explains_dev_command(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    h = signed_in()
+    bot = request(h).json()["messages"][1]
+    assert bot["ticket"] is None and "/ticket" in bot["body"]

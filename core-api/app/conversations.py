@@ -159,14 +159,25 @@ def run_turn(
     body: str,
     uploads=(),
     provider_message_id: str | None = None,
+    want_ticket: bool = False,
 ) -> Turn | None:
     """Handle one customer message end to end. `uploads` must already belong to the user.
+
+    `want_ticket` is the Create request button: from then on (until a ticket exists) the
+    assistant asks for any missing details and creates the ticket as soon as it has them.
 
     Returns None when `provider_message_id` was seen before (a duplicate delivery).
     """
     # Step 1: save the customer's message and read the context (short transaction).
     with shared_engine().begin() as conn:
         cid = active_conversation(conn, user_id, channel)
+        if want_ticket:
+            conn.execute(
+                text("UPDATE conversations SET ticket_requested = TRUE WHERE id = :c"), {"c": cid}
+            )
+        requested = conn.execute(
+            text("SELECT ticket_requested FROM conversations WHERE id = :c"), {"c": cid}
+        ).scalar_one()
         mine = store_message(
             conn,
             cid,
@@ -188,7 +199,17 @@ def run_turn(
             images.append((u.mime_type, storage.load(u.storage_key)))
         except OSError:
             logger.warning("Upload %s missing from storage; sending text only", u.id)
-    reply = agent.respond(context, body, images, existing_ticket=existing_ticket, channel=channel)
+    if want_ticket and existing_ticket:  # button pressed again: just show the existing request
+        reply = agent.Reply("", source="system", ticket_request={})
+    else:
+        reply = agent.respond(
+            context,
+            body,
+            images,
+            existing_ticket=existing_ticket,
+            channel=channel,
+            want_ticket=requested,
+        )
     # Step 3: run the ticket tool if the agent asked for it, then save the reply.
     with shared_engine().begin() as conn:
         text_out, ticket = reply.text, None

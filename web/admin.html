@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alche Home Ops</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f8f9fa;color:#2c3e50;margin:0}
+main{max-width:860px;margin:30px auto;background:#fff;padding:28px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,.06)}
+h1{color:#2b5c8f;margin:0 0 6px}
+button,input,select{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid #cbd5e1;box-sizing:border-box}
+button{background:#2b5c8f;color:#fff;border:none;cursor:pointer;font-weight:600}
+button.alt{background:#fff;color:#2b5c8f;border:1px solid #2b5c8f}
+button:hover{opacity:.9}button:disabled{opacity:.5;cursor:default}
+#msg{color:#b42318;min-height:1.4em;margin:4px 0}
+#login input{display:block;width:100%;margin:6px 0}
+.hide{display:none}
+.top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.top .actions{display:flex;gap:8px;align-items:center}
+.ticket{border:1px solid #e2e8f0;border-left:4px solid #b42318;border-radius:8px;padding:12px 14px;margin:10px 0}
+.ticket.MATCHING{border-left-color:#2b5c8f}
+.ticket .head{display:flex;justify-content:space-between;gap:8px;font-weight:700;color:#2b5c8f;flex-wrap:wrap}
+.ticket .meta{color:#64748b;font-size:.88rem;margin:4px 0}
+.ticket .summary{margin:6px 0}
+.ticket .buttons{display:flex;gap:8px;margin-top:8px}
+table{border-collapse:collapse;width:100%;margin-top:10px;font-size:.9rem}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0}
+th{color:#64748b;font-weight:600}
+.dim{color:#94a3b8}
+.ok{color:#15803d;font-weight:600}
+.empty{color:#94a3b8;text-align:center;margin:30px 0}
+</style>
+</head>
+<body>
+<main>
+<h1>Alche Home Ops</h1>
+<p id="msg"></p>
+
+<section id="login">
+  <p>Sign in with an admin account (see <code>python -m scripts.make_admin</code>).</p>
+  <input id="email" type="email" placeholder="Email" autocomplete="username">
+  <input id="password" type="password" placeholder="Password" autocomplete="current-password">
+  <button onclick="signIn()">Log in</button>
+</section>
+
+<section id="panel" class="hide">
+  <div class="top">
+    <span><strong id="who"></strong></span>
+    <span class="actions">
+      <select id="status" onchange="load()">
+        <option value="UNMATCHED">Unmatched</option>
+        <option value="MATCHING">Waiting for a reply (matching)</option>
+      </select>
+      <button class="alt" onclick="load()">Refresh</button>
+      <button class="alt" onclick="signOut()">Log out</button>
+    </span>
+  </div>
+  <div id="tickets"></div>
+</section>
+</main>
+
+<script>
+// Dev-only: tokens live in sessionStorage, like the customer page.
+const API = window.API_BASE || 'http://localhost:8000';
+const $ = id => document.getElementById(id);
+const msg = t => { $('msg').textContent = t || ''; };
+const store = {
+  get: k => sessionStorage.getItem(k),
+  set: (k, v) => sessionStorage.setItem(k, v),
+  clear: () => sessionStorage.clear()
+};
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, opts);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const d = body && body.detail;
+    throw Object.assign(new Error(typeof d === 'string' ? d : 'Request failed'), { status: res.status });
+  }
+  return body;
+}
+
+async function authed(path, opts = {}, retried = false) {
+  const headers = { ...(opts.headers || {}), Authorization: 'Bearer ' + store.get('access') };
+  try {
+    return await api(path, { ...opts, headers });
+  } catch (e) {
+    if (e.status === 401 && store.get('refresh') && !retried) {
+      const t = await api('/auth/refresh', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: store.get('refresh') })
+      });
+      store.set('access', t.access_token); store.set('refresh', t.refresh_token);
+      return authed(path, opts, true);
+    }
+    throw e;
+  }
+}
+
+// Build elements with textContent only: ticket summaries are written by customers.
+function el(tag, props = {}, ...kids) {
+  const n = Object.assign(document.createElement(tag), props);
+  kids.flat().forEach(k => n.append(k));
+  return n;
+}
+
+async function signIn() {
+  msg('');
+  try {
+    const t = await api('/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: $('email').value.trim(), password: $('password').value })
+    });
+    store.set('access', t.access_token); store.set('refresh', t.refresh_token);
+    $('password').value = '';
+    await showPanel();
+  } catch (e) { msg(e.message === 'Request failed' ? 'Could not log in.' : e.message); }
+}
+
+function signOut() {
+  store.clear();
+  $('panel').classList.add('hide'); $('login').classList.remove('hide');
+  msg('');
+}
+
+async function showPanel() {
+  const me = await authed('/me');
+  if (me.role !== 'ADMIN') { store.clear(); msg('This account is not an admin.'); return; }
+  $('who').textContent = me.email || me.id;
+  $('login').classList.add('hide'); $('panel').classList.remove('hide');
+  await load();
+}
+
+async function load() {
+  msg('');
+  const box = $('tickets');
+  try {
+    const list = await authed('/admin/tickets?status=' + $('status').value);
+    box.replaceChildren(...(list.length ? list.map(ticketView)
+      : [el('p', { className: 'empty', textContent: 'No tickets here. Nice.' })]));
+  } catch (e) { msg(e.message); }
+}
+
+function ticketView(t) {
+  const detail = el('div');
+  const card = el('div', { className: 'ticket ' + t.status },
+    el('div', { className: 'head' },
+      el('span', { textContent: `#${t.number} · ${t.category} · ${t.urgency}` }),
+      el('span', { textContent: `ZIP ${t.location_zip}` })),
+    el('div', { className: 'meta', textContent:
+      `${t.status} · waiting ${t.waiting_minutes} min · ${t.offers} offer(s) sent` }),
+    el('p', { className: 'summary', textContent: t.issue_summary }),
+    el('div', { className: 'buttons' },
+      el('button', { textContent: 'Choose handyman', onclick: () => chooser(t, detail) }),
+      t.status === 'UNMATCHED'
+        ? el('button', { className: 'alt', textContent: 'Retry automatic dispatch',
+            onclick: () => retry(t) }) : ''),
+    detail);
+  return card;
+}
+
+async function chooser(t, box) {
+  try {
+    const list = await authed(`/admin/tickets/${t.id}/handymen`);
+    if (!list.length) { box.replaceChildren(el('p', { className: 'dim', textContent: 'Nobody has this skill.' })); return; }
+    const head = el('tr', {}, ...['Handyman', 'Score', 'Covers ZIP', 'Available', 'Rating', 'Response', 'Earlier offer', '']
+      .map(h => el('th', { textContent: h })));
+    const rows = list.map(h => el('tr', {},
+      el('td', { textContent: h.display_name }),
+      el('td', h.score === null ? { className: 'dim', textContent: 'n/a' } : { className: 'ok', textContent: h.score.toFixed(3) }),
+      el('td', { textContent: h.covers_zip ? 'yes' : 'no' }),
+      el('td', { textContent: h.is_available ? 'yes' : 'no' }),
+      el('td', { textContent: h.rating_avg.toFixed(1) }),
+      el('td', { textContent: Math.round(h.response_rate * 100) + '%' }),
+      el('td', { textContent: h.already_offered || '' }),
+      el('td', {}, el('button', { textContent: 'Assign', onclick: () => assign(t, h) }))));
+    box.replaceChildren(el('table', {}, el('thead', {}, head), el('tbody', {}, rows)));
+  } catch (e) { msg(e.message); }
+}
+
+async function assign(t, h) {
+  const warn = h.score === null ? ' They do not cover this ZIP or are unavailable.' : '';
+  if (!confirm(`Assign ${h.display_name} to #${t.number}?${warn}`)) return;
+  try {
+    await authed(`/admin/tickets/${t.id}/assign`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handyman_id: h.handyman_id })
+    });
+    await load();
+    msg(`#${t.number} assigned to ${h.display_name}.`);
+  } catch (e) { msg(e.message); }
+}
+
+async function retry(t) {
+  try {
+    const r = await authed(`/admin/tickets/${t.id}/retry`, { method: 'POST' });
+    await load();
+    msg(r.started ? `Dispatch restarted for #${t.number}.` : 'Ticket is no longer UNMATCHED.');
+  } catch (e) { msg(e.message); }
+}
+
+(function init() {
+  if (store.get('access')) showPanel().catch(() => signOut());
+})();
+</script>
+</body>
+</html>

@@ -161,3 +161,21 @@ docker compose exec core-api python -m scripts.sim_sms "+16195550101" "ACCEPT 10
 One offer is out at a time (expires after 3 min / 15 min / 2 h for emergency / same-day / flexible, or `DISPATCH_TIMEOUT_S`).
 Decline or timeout moves to the next-ranked handyman; after 5 offers or no candidates the ticket becomes UNMATCHED.
 Handymen reply `ACCEPT 1024` or `DECLINE 1024`; ACCEPT moves the ticket to ASSIGNED. The offer shows the ZIP only.
+
+## T12 demo: ops fallback page
+
+```bash
+docker compose exec core-api python -m scripts.make_admin you@example.com   # register that email in the web app first
+```
+
+Open `http://localhost:3000/admin.html` and log in. It lists UNMATCHED tickets (or tickets waiting on an offer),
+shows every handyman with the right skill (ranked ones first), and assigns one by hand. API: `GET /admin/tickets`,
+`GET /admin/tickets/{id}/handymen`, `POST /admin/tickets/{id}/assign`, `POST /admin/tickets/{id}/retry` (ADMIN role only).
+
+## T12-1 demo: Create request button and handyman choice
+
+In the web chat the assistant gives technical suggestions and does not ask for ZIP or urgency. Click **Create request**
+when ready: if details are missing the assistant asks for them, then the ticket is created. On the ticket card choose a
+handyman (your pick is asked first) or **Find me a handyman** (best ranked first). If the handyman declines or does not
+answer, the offers continue down the ranking until someone accepts. API: `POST /chat/request-ticket`,
+`GET /tickets/{id}/handymen`, `POST /tickets/{id}/dispatch` with an optional `handyman_id`. SMS chats still ask you to reply OK.

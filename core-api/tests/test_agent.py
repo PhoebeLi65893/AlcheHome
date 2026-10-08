@@ -167,8 +167,15 @@ def test_service_returns_ticket_request_from_function_call(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     call = gemini.FunctionCall("create_repair_ticket", {"category": "HVAC"})
     monkeypatch.setattr(gemini, "generate", lambda c, **kw: gemini.GeminiResult("", call))
-    reply = service.respond([row("USER", "yes")], "yes")
+    reply = service.respond([row("USER", "yes")], "yes", want_ticket=True)
     assert reply.ticket_request == {"category": "HVAC"} and reply.text == ""
+
+
+def test_function_call_is_ignored_when_the_tool_was_not_offered(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    call = gemini.FunctionCall("create_repair_ticket", {"category": "HVAC"})
+    monkeypatch.setattr(gemini, "generate", lambda c, **kw: gemini.GeminiResult("", call))
+    assert service.respond([row("USER", "yes")], "yes").ticket_request is None
 
 
 def test_service_ignores_unknown_function_calls(monkeypatch):

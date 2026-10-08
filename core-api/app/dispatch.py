@@ -93,8 +93,12 @@ def notify_customer(conn, t, body: str) -> list[Outgoing]:
     return []
 
 
-def _next_offer(conn, t) -> list[Outgoing]:
-    """Ticket `t` is MATCHING and locked: offer it to the next handyman, or give up."""
+def _next_offer(conn, t, preferred: str | None = None) -> list[Outgoing]:
+    """Ticket `t` is MATCHING and locked: offer it to the next handyman, or give up.
+
+    `preferred` (the customer's pick) goes first if they are eligible; otherwise, and for every
+    later offer, the best-ranked handyman who has not been asked yet.
+    """
     tried = {
         str(r[0])
         for r in conn.execute(
@@ -104,7 +108,9 @@ def _next_offer(conn, t) -> list[Outgoing]:
     nxt = None
     if len(tried) < MAX_ATTEMPTS:
         ranked = rank(find_candidates(conn, t.category, t.location_zip), t.urgency, t.location_zip)
-        nxt = next((r for r in ranked if r.candidate.handyman_id not in tried), None)
+        untried = [r for r in ranked if r.candidate.handyman_id not in tried]
+        nxt = next((r for r in untried if r.candidate.handyman_id == preferred), None)
+        nxt = nxt or next(iter(untried), None)
     if nxt is None:
         transition(conn, t.id, "UNMATCHED", "dispatch")
         logger.info("Ticket #%s is UNMATCHED after %d offers", t.ticket_number, len(tried))
@@ -130,16 +136,30 @@ def _next_offer(conn, t) -> list[Outgoing]:
     return [Outgoing(phone, body)] if phone else []
 
 
-def start_dispatch(ticket_id) -> bool:
-    """Move an OPEN (or UNMATCHED) ticket to MATCHING and send the first offer."""
+class NotEligible(ValueError):
+    """The preferred handyman cannot take this ticket."""
+
+
+def start_dispatch(ticket_id, preferred=None, actor: str = "dispatch") -> bool:
+    """Move an OPEN (or UNMATCHED) ticket to MATCHING and send the first offer.
+
+    With `preferred` (a handyman id) that person is asked first; if they decline or do not
+    answer, the offers continue down the ranking. Raises NotEligible for someone who does not
+    cover the ticket's ZIP, lacks the skill or is unavailable.
+    """
+    preferred = str(preferred) if preferred else None
     with shared_engine().begin() as conn:
         t = _ticket(conn, ticket_id, lock=True)
         if t.status not in ("OPEN", "UNMATCHED"):
             return False
-        transition(conn, t.id, "MATCHING", "dispatch")
+        if preferred and preferred not in {
+            c.handyman_id for c in find_candidates(conn, t.category, t.location_zip)
+        }:
+            raise NotEligible(preferred)
+        transition(conn, t.id, "MATCHING", actor)
         if t.status == "UNMATCHED":  # a retry starts with a clean slate of handymen
             conn.execute(text("DELETE FROM dispatch_offers WHERE ticket_id = :t"), {"t": t.id})
-        out = _next_offer(conn, t)
+        out = _next_offer(conn, t, preferred)
     deliver(out)
     return True
 
