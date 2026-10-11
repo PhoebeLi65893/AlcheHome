@@ -179,3 +179,34 @@ when ready: if details are missing the assistant asks for them, then the ticket 
 handyman (your pick is asked first) or **Find me a handyman** (best ranked first). If the handyman declines or does not
 answer, the offers continue down the ranking until someone accepts. API: `POST /chat/request-ticket`,
 `GET /tickets/{id}/handymen`, `POST /tickets/{id}/dispatch` with an optional `handyman_id`. SMS chats still ask you to reply OK.
+
+## T13 demo: customer <-> handyman messaging
+
+Once a handyman accepts (ticket ASSIGNED) the ticket card in the web chat gets a message box. Messages go out as SMS
+from our number, so neither side sees the other's phone number. The handyman just texts back (start with `#1042` if
+they have several jobs); an SMS customer simply texts. Relayed messages are stored in `messages` (tagged with
+`relay_ticket_id`) and never reach the AI. API: `GET/POST /tickets/{id}/thread`. Test without real SMS:
+
+```bash
+docker compose exec core-api python -m scripts.sim_sms "+16195550101" "ACCEPT 1042"
+docker compose exec core-api python -m scripts.sim_sms "+16195550101" "I am on my way"
+```
+
+## T13-1 demo: handyman app and Messages view
+
+Handymen use their own page, `http://localhost:3000/handyman.html`. An admin creates the account's password link:
+
+```bash
+docker compose exec core-api python -m scripts.invite_handyman mike@example.com
+```
+
+Open the link, set a password and log in. Tabs: **Jobs** (offers with Accept/Decline, active and past jobs),
+**Messages** (shared with the customer app: one conversation per job, unread badges, Seen) and **Assistant**
+(AI help for the selected job and "Draft a reply to the customer"). Customers get a **Messages** tab next to the
+assistant chat. If the other person is not active in the app the message is also texted, as in T13.
+API: `GET /threads`, `GET/POST /threads/{ticket}/messages`, `GET /pro/jobs`, `POST /pro/jobs/{ticket}/accept|decline`,
+`GET/POST /pro/jobs/{ticket}/assistant`, `POST /pro/jobs/{ticket}/draft`.
+
+**Offers and presence:** a job offer is texted to the handyman only when they are not active in the app (no request in
+the last 2 minutes). An active handyman sees it in the Jobs tab; if they have not answered after about 2 minutes (or a third
+of the offer's time limit if shorter) they get one SMS reminder.

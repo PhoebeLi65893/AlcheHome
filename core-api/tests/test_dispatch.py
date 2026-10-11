@@ -330,3 +330,78 @@ def test_handyman_texts_never_reach_the_ai_or_create_customer_chats(world, monke
             text("SELECT count(*) FROM conversations WHERE user_id = :u"), {"u": uid}
         ).scalar()
     assert n == 0
+
+
+# ---------- offers go to the app first when the handyman is in it ----------
+def mark_active(uid, seconds_ago=0):
+    with get_engine().begin() as c:
+        c.execute(
+            text("UPDATE users SET last_seen_at = now() - make_interval(secs => :s) WHERE id = :u"),
+            {"s": seconds_ago, "u": uid},
+        )
+
+
+def offer_row(tid):
+    with get_engine().connect() as c:
+        return c.execute(
+            text("SELECT via_app, reminded_at FROM dispatch_offers WHERE ticket_id = :t"),
+            {"t": tid},
+        ).one()
+
+
+def test_offer_is_not_texted_while_the_handyman_is_in_the_app(world):  # noqa: F811
+    hid, _ = new_handyman(world, "Best", 4.9)
+    mark_active(hid)
+    tid, _ = new_ticket(world)
+    dispatch.start_dispatch(tid)
+    assert world.messages == []
+    assert offer_row(tid).via_app is True
+    assert offers(tid) == [("Best", "SENT")]  # and it is waiting in their Jobs tab
+
+
+def test_offer_is_texted_when_the_handyman_was_last_seen_long_ago(world):  # noqa: F811
+    hid, phone = new_handyman(world, "Best", 4.9)
+    mark_active(hid, seconds_ago=600)
+    tid, _ = new_ticket(world)
+    dispatch.start_dispatch(tid)
+    assert [to for to, _ in world.messages] == [phone]
+    assert offer_row(tid).via_app is False
+
+
+def test_unanswered_in_app_offer_gets_one_sms_reminder(world):  # noqa: F811
+    hid, phone = new_handyman(world, "Best", 4.9)
+    mark_active(hid)
+    tid, _ = new_ticket(world)
+    dispatch.start_dispatch(tid)
+    assert dispatch.remind_unanswered() == 0  # too soon
+    with get_engine().begin() as c:
+        c.execute(
+            text(
+                "UPDATE dispatch_offers SET sent_at = now() - interval '3 minutes' "
+                "WHERE ticket_id = :t"
+            ),
+            {"t": tid},
+        )
+    assert dispatch.remind_unanswered() == 1
+    assert [to for to, _ in world.messages] == [phone]
+    assert world.messages[0][1].startswith("Reminder")
+    assert offer_row(tid).reminded_at is not None
+    assert dispatch.remind_unanswered() == 0  # only once
+
+
+def test_answered_or_texted_offers_get_no_reminder(world):  # noqa: F811
+    hid, _ = new_handyman(world, "Best", 4.9)
+    mark_active(hid)
+    tid, num = new_ticket(world)
+    dispatch.start_dispatch(tid)
+    dispatch.handle_handyman_reply(hid, f"ACCEPT {num}")
+    with get_engine().begin() as c:
+        c.execute(
+            text(
+                "UPDATE dispatch_offers SET sent_at = now() - interval '3 minutes' "
+                "WHERE ticket_id = :t"
+            ),
+            {"t": tid},
+        )
+    world.messages.clear()
+    assert dispatch.remind_unanswered() == 0 and world.messages == []

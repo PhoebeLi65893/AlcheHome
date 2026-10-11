@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alche Home Pro</title>
+<link rel="stylesheet" href="messages.css">
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f8f9fa;color:#2c3e50;margin:0}
+main{max-width:860px;margin:30px auto;background:#fff;padding:24px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,.06)}
+h1{color:#2b5c8f;margin:0 0 6px}h2{font-size:1.05rem;margin:18px 0 6px;color:#2b5c8f}
+button,input,select,textarea{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid #cbd5e1;box-sizing:border-box}
+button{background:#2b5c8f;color:#fff;border:none;cursor:pointer;font-weight:600}
+button.alt{background:#fff;color:#2b5c8f;border:1px solid #2b5c8f}
+button:hover{opacity:.9}button:disabled{opacity:.5;cursor:default}
+button.danger{background:#fff;color:#b42318;border:1px solid #b42318}
+#msg{color:#b42318;min-height:1.4em;margin:4px 0}
+.hide{display:none}
+.auth input{display:block;width:100%;margin:6px 0}
+.top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.tabs{display:flex;gap:6px;margin:12px 0}
+.tab{background:#fff;color:#2b5c8f;border:1px solid #2b5c8f}
+.tab.active{background:#2b5c8f;color:#fff}
+.tab .badge{margin-left:4px}
+.job{border:1px solid #e2e8f0;border-left:4px solid #2b5c8f;border-radius:8px;padding:12px 14px;margin:8px 0}
+.job.offer{border-left-color:#d97706;background:#fffbeb}
+.job .head{display:flex;justify-content:space-between;gap:8px;font-weight:700;color:#2b5c8f;flex-wrap:wrap}
+.job .meta{color:#64748b;font-size:.86rem;margin:3px 0}
+.job .buttons{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.status{font-size:.75rem;font-weight:700;padding:2px 8px;border-radius:10px;background:#e8f0f9;color:#2b5c8f}
+.empty{color:#94a3b8;text-align:center;margin:24px 0}
+.ai-log{height:300px;overflow-y:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.ai-log .m{max-width:82%;padding:8px 12px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word}
+.ai-log .USER{align-self:flex-end;background:#2b5c8f;color:#fff}
+.ai-log .BOT{align-self:flex-start;background:#e8edf3}
+.ai-row{display:flex;gap:8px;margin-top:8px}.ai-row input{flex:1;margin:0}
+.draft{margin-top:10px;border:1px dashed #2b5c8f;border-radius:8px;padding:10px;background:#f8fbff}
+.draft textarea{width:100%;min-height:70px}
+</style>
+</head>
+<body>
+<main>
+<h1>Alche Home Pro</h1>
+<p id="msg"></p>
+
+<section id="signedOut" class="auth">
+  <div id="loginBox">
+    <p>Log in with your handyman account. Need an account? Ask Alche Home ops for an invite link.</p>
+    <input id="email" type="email" placeholder="Email" autocomplete="username">
+    <input id="password" type="password" placeholder="Password" autocomplete="current-password">
+    <button onclick="login()">Log in</button>
+  </div>
+  <div id="inviteBox" class="hide">
+    <p>Welcome! Choose a password (at least 10 characters) to finish setting up your account.</p>
+    <input id="newPassword" type="password" placeholder="New password" autocomplete="new-password">
+    <button onclick="setPassword()">Set password and log in</button>
+  </div>
+</section>
+
+<section id="signedIn" class="hide">
+  <div class="top"><strong id="who"></strong><button class="alt" onclick="logout()">Log out</button></div>
+  <div class="tabs">
+    <button id="tabJobs" class="tab active" onclick="showTab('jobs')">Jobs</button>
+    <button id="tabMsgs" class="tab" onclick="showTab('msgs')">Messages <span id="msgBadge" class="badge hide"></span></button>
+    <button id="tabAi" class="tab" onclick="showTab('ai')">Assistant</button>
+  </div>
+
+  <div id="paneJobs">
+    <h2>Job offers</h2><div id="offers"></div>
+    <h2>My jobs</h2><div id="active"></div>
+    <h2>Past jobs</h2><div id="past"></div>
+  </div>
+
+  <div id="paneMsgs" class="hide"><div id="msgsRoot"></div></div>
+
+  <div id="paneAi" class="hide">
+    <p>Ask for help with a job: likely causes, tools and parts, safety, or how to explain it to the customer.</p>
+    <select id="aiJob" onchange="loadAi()"></select>
+    <div class="ai-log" id="aiLog" style="margin-top:8px"></div>
+    <div class="ai-row">
+      <input id="aiText" type="text" maxlength="2000" placeholder="Ask the assistant about this job..." autocomplete="off">
+      <button id="aiSend" onclick="askAi()">Ask</button>
+    </div>
+    <div class="ai-row"><button class="alt" id="draftBtn" onclick="makeDraft()">Draft a reply to the customer</button></div>
+    <div id="draftBox" class="draft hide">
+      <p style="margin:0 0 6px">Suggested message. Edit it, then send it from Messages.</p>
+      <textarea id="draftText" maxlength="500"></textarea>
+      <div class="ai-row"><button onclick="useDraft()">Use in Messages</button><button class="alt" onclick="$('draftBox').classList.add('hide')">Discard</button></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<script src="messages.js"></script>
+<script>
+// Dev-only: tokens live in sessionStorage, like the other pages.
+const API = window.API_BASE || 'http://localhost:8000';
+const $ = id => document.getElementById(id);
+const msg = t => { $('msg').textContent = t || ''; };
+const store = {
+  get: k => sessionStorage.getItem(k),
+  set: (k, v) => sessionStorage.setItem(k, v),
+  clear: () => sessionStorage.clear()
+};
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+const el = (tag, cls, txt) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (txt != null) e.textContent = txt;
+  return e;
+};
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, opts);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const d = body && body.detail;
+    throw Object.assign(new Error(typeof d === 'string' ? d : 'Request failed'), { status: res.status });
+  }
+  return body;
+}
+async function authed(path, opts = {}, retried = false) {
+  const headers = { ...(opts.headers || {}), Authorization: 'Bearer ' + store.get('access') };
+  try {
+    return await api(path, { ...opts, headers });
+  } catch (e) {
+    if (e.status === 401 && store.get('refresh') && !retried) {
+      const t = await api('/auth/refresh', { method: 'POST', headers: JSON_HEADERS,
+        body: JSON.stringify({ refresh_token: store.get('refresh') }) });
+      saveTokens(t);
+      return authed(path, opts, true);
+    }
+    throw e;
+  }
+}
+function saveTokens(t) { store.set('access', t.access_token); store.set('refresh', t.refresh_token); }
+
+// ---- sign in / invite ----
+function inviteToken() {
+  const m = location.hash.match(/invite=([\w-]+)/);
+  return m ? m[1] : null;
+}
+async function login() {
+  msg('');
+  try {
+    saveTokens(await api('/auth/login', { method: 'POST', headers: JSON_HEADERS,
+      body: JSON.stringify({ email: $('email').value.trim(), password: $('password').value }) }));
+    $('password').value = '';
+    await showApp();
+  } catch (e) { msg(e.status === 401 ? 'Wrong email or password.' : e.message); }
+}
+async function setPassword() {
+  msg('');
+  try {
+    saveTokens(await api('/pro/set-password', { method: 'POST', headers: JSON_HEADERS,
+      body: JSON.stringify({ token: inviteToken(), password: $('newPassword').value }) }));
+    $('newPassword').value = '';
+    history.replaceState(null, '', location.pathname);
+    await showApp();
+  } catch (e) { msg(e.message); }
+}
+function signedOut(m) {
+  clearInterval(jobsTimer);
+  if (msgs) { msgs.stop(); msgs = null; }
+  store.clear();
+  $('signedIn').classList.add('hide'); $('signedOut').classList.remove('hide');
+  const inv = inviteToken();
+  $('loginBox').classList.toggle('hide', !!inv);
+  $('inviteBox').classList.toggle('hide', !inv);
+  msg(m || '');
+}
+async function logout() {
+  try { await api('/auth/logout', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ refresh_token: store.get('refresh') }) }); } catch (e) {}
+  signedOut();
+}
+
+// ---- tabs ----
+let msgs = null, jobsTimer = null, jobsCache = { offers: [], active: [], past: [] };
+function showTab(which) {
+  for (const [k, pane] of [['jobs', 'paneJobs'], ['msgs', 'paneMsgs'], ['ai', 'paneAi']]) {
+    $(pane).classList.toggle('hide', k !== which);
+  }
+  $('tabJobs').classList.toggle('active', which === 'jobs');
+  $('tabMsgs').classList.toggle('active', which === 'msgs');
+  $('tabAi').classList.toggle('active', which === 'ai');
+  if (which === 'msgs' && msgs) msgs.refresh();
+  if (which === 'ai') loadAi();
+}
+
+// ---- jobs ----
+function jobCard(j, kind) {
+  const c = el('div', 'job' + (kind === 'offer' ? ' offer' : ''));
+  const head = el('div', 'head');
+  head.append(el('span', null, '#' + j.number + ' · ' + j.category_label + ' · ' + j.urgency.replace('_', ' ')),
+    el('span', 'status', j.status.replace('_', ' ')));
+  const meta = el('div', 'meta', 'ZIP ' + j.location_zip + ' · Customer: ' + j.customer +
+    (j.severity ? ' · Severity: ' + j.severity : ''));
+  c.append(head, meta, el('p', null, j.issue_summary));
+  const b = el('div', 'buttons');
+  if (kind === 'offer') {
+    const mins = j.expires_at ? Math.max(0, Math.ceil((new Date(j.expires_at) - Date.now()) / 60000)) : null;
+    if (mins !== null) c.insertBefore(el('div', 'meta', 'Offer expires in about ' + mins + ' min'), c.children[2]);
+    const ok = el('button', null, 'Accept'), no = el('button', 'danger', 'Decline');
+    ok.onclick = () => answer(j, 'accept', ok, no);
+    no.onclick = () => answer(j, 'decline', ok, no);
+    b.append(ok, no);
+  } else if (kind === 'active') {
+    const m = el('button', null, 'Messages' + (j.unread ? ' (' + j.unread + ' new)' : ''));
+    m.onclick = () => { showTab('msgs'); msgs.open(j.ticket_id); };
+    const a = el('button', 'alt', 'Ask the assistant');
+    a.onclick = () => { showTab('ai'); $('aiJob').value = j.ticket_id; loadAi(); };
+    b.append(m, a);
+  }
+  c.append(b);
+  return c;
+}
+async function answer(j, what, ok, no) {
+  ok.disabled = no.disabled = true; msg('');
+  try {
+    const r = await authed('/pro/jobs/' + j.ticket_id + '/' + what, { method: 'POST' });
+    msg(what === 'accept' ? 'Job #' + j.number + ' is yours. Say hello to the customer in Messages.' : 'Declined job #' + j.number + '.');
+    await loadJobs();
+    if (what === 'accept' && r.status === 'ASSIGNED') showTab('jobs');
+  } catch (e) { msg(e.message); await loadJobs(); }
+}
+async function loadJobs() {
+  try {
+    jobsCache = await authed('/pro/jobs');
+  } catch (e) { if (e.status === 401) signedOut('Please log in again.'); return; }
+  // Only touch the page when the data changed, so open dropdowns and clicks are not disturbed.
+  const sig = JSON.stringify(jobsCache, (k, v) => k === 'expires_at' ? undefined : v);
+  if (sig === loadJobs.sig) return;
+  loadJobs.sig = sig;
+  const fill = (id, list, kind, empty) => $(id).replaceChildren(...(list.length ? list.map(j => jobCard(j, kind)) : [el('p', 'empty', empty)]));
+  // Tell the handyman about new offers even when this tab is in the background.
+  const n = jobsCache.offers.length;
+  document.title = (n ? '(' + n + ') New job offer - ' : '') + 'Alche Home Pro';
+  fill('offers', jobsCache.offers, 'offer', 'No open offers right now.');
+  fill('active', jobsCache.active, 'active', 'No active jobs.');
+  fill('past', jobsCache.past, 'past', 'Nothing yet.');
+  const sel = $('aiJob'), prev = sel.value;
+  const all = [...jobsCache.offers, ...jobsCache.active, ...jobsCache.past];
+  sel.replaceChildren(...all.map(j => { const o = el('option', null, '#' + j.number + ' ' + j.category_label + ' (' + j.status.replace('_', ' ').toLowerCase() + ')'); o.value = j.ticket_id; return o; }));
+  if (prev && all.some(j => j.ticket_id === prev)) sel.value = prev;
+}
+
+// ---- assistant ----
+async function loadAi() {
+  const id = $('aiJob').value;
+  const log = $('aiLog');
+  if (!id) { log.replaceChildren(el('p', 'empty', 'You have no jobs to ask about yet.')); return; }
+  try {
+    const rows = await authed('/pro/jobs/' + id + '/assistant');
+    log.replaceChildren(...(rows.length ? rows.map(m => el('div', 'm ' + m.sender, m.body)) : [el('p', 'empty', 'Ask anything about this job.')]));
+    log.scrollTop = log.scrollHeight;
+  } catch (e) { msg(e.message); }
+}
+async function askAi() {
+  const id = $('aiJob').value, input = $('aiText'), body = input.value.trim();
+  if (!id || !body) return;
+  $('aiSend').disabled = true; msg('');
+  const log = $('aiLog');
+  log.append(el('div', 'm USER', body), el('div', 'm BOT', 'Thinking...'));
+  log.scrollTop = log.scrollHeight;
+  input.value = '';
+  try {
+    const rows = await authed('/pro/jobs/' + id + '/assistant', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ body }) });
+    log.replaceChildren(...rows.map(m => el('div', 'm ' + m.sender, m.body)));
+    log.scrollTop = log.scrollHeight;
+  } catch (e) { msg(e.message); input.value = body; await loadAi(); }
+  $('aiSend').disabled = false;
+}
+$('aiText').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) askAi();
+});
+async function makeDraft() {
+  const id = $('aiJob').value;
+  if (!id) return;
+  $('draftBtn').disabled = true; msg('');
+  try {
+    const r = await authed('/pro/jobs/' + id + '/draft', { method: 'POST' });
+    $('draftText').value = r.draft;
+    $('draftBox').classList.remove('hide');
+  } catch (e) { msg(e.message); }
+  $('draftBtn').disabled = false;
+}
+function useDraft() {
+  const id = $('aiJob').value, text = $('draftText').value.trim();
+  const job = jobsCache.active.find(j => j.ticket_id === id);
+  if (!job) { msg('Messages open once you have accepted this job.'); return; }
+  showTab('msgs');
+  msgs.open(id).then(() => msgs.prefill(text));
+  $('draftBox').classList.add('hide');
+}
+
+// ---- start ----
+async function showApp() {
+  try {
+    const me = await authed('/me');
+    if (me.role !== 'HANDYMAN') { signedOut('This page is for handyman accounts.'); return; }
+    $('who').textContent = me.display_name || me.email;
+    $('signedOut').classList.add('hide'); $('signedIn').classList.remove('hide');
+    if (msgs) msgs.stop();
+    msgs = AlcheMessages.mount($('msgsRoot'), { authed, onUnread: n => {
+      const b = $('msgBadge'); b.textContent = n; b.classList.toggle('hide', !n);
+    } });
+    await loadJobs();
+    clearInterval(jobsTimer);
+    jobsTimer = setInterval(loadJobs, 5000);
+    showTab('jobs');
+  } catch (e) { signedOut(e.status === 401 ? 'Please log in again.' : e.message); }
+}
+
+(function init() {
+  if (inviteToken()) { signedOut(); return; }
+  if (store.get('access')) showApp(); else signedOut();
+})();
+</script>
+</body>
+</html>

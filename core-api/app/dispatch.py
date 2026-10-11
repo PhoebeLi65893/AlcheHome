@@ -122,18 +122,30 @@ def _next_offer(conn, t, preferred: str | None = None) -> list[Outgoing]:
         )
     seconds = timeout_seconds(t.urgency)
     body = offer_text(t, seconds)
+    contact = conn.execute(
+        text(
+            "SELECT phone_e164, COALESCE(last_seen_at > now() - interval '2 minutes', FALSE) "
+            "AS active FROM users WHERE id = :h"
+        ),
+        {"h": nxt.candidate.handyman_id},
+    ).one()
+    # A handyman who has the app open sees the offer there, so we do not text them as well.
+    # If they have not answered after a while, remind_unanswered() texts them.
+    via_app = bool(contact.active)
     conn.execute(
         text(
-            "INSERT INTO dispatch_offers (ticket_id, handyman_id, message, expires_at) "
-            "VALUES (:t, :h, :m, clock_timestamp() + make_interval(secs => :s))"
+            "INSERT INTO dispatch_offers (ticket_id, handyman_id, message, via_app, expires_at) "
+            "VALUES (:t, :h, :m, :v, clock_timestamp() + make_interval(secs => :s))"
         ),
-        {"t": t.id, "h": nxt.candidate.handyman_id, "m": body, "s": seconds},
+        {"t": t.id, "h": nxt.candidate.handyman_id, "m": body, "v": via_app, "s": seconds},
     )
-    phone = conn.execute(
-        text("SELECT phone_e164 FROM users WHERE id = :h"), {"h": nxt.candidate.handyman_id}
-    ).scalar()
-    logger.info("Offered ticket #%s to a handyman (offer %d)", t.ticket_number, len(tried) + 1)
-    return [Outgoing(phone, body)] if phone else []
+    logger.info(
+        "Offered ticket #%s to a handyman (offer %d, %s)",
+        t.ticket_number,
+        len(tried) + 1,
+        "in the app" if via_app else "by SMS",
+    )
+    return [Outgoing(contact.phone_e164, body)] if contact.phone_e164 and not via_app else []
 
 
 class NotEligible(ValueError):
@@ -168,7 +180,10 @@ def handle_handyman_reply(user_id, body: str) -> tuple[str, list[Outgoing]]:
     """Process an SMS from a handyman. Returns (reply text for them, other messages to send)."""
     m = REPLY_RE.match(body)
     if not m:
-        return HELP_REPLY, []
+        from app import relay  # local import: relay uses this module's Outgoing
+
+        with shared_engine().begin() as conn:
+            return relay.handyman_text(conn, user_id, body)
     accept = m.group(1).upper() in ACCEPT_WORDS
     number = int(m.group(2)) if m.group(2) else None
     with shared_engine().begin() as conn:
@@ -224,10 +239,11 @@ def handle_handyman_reply(user_id, body: str) -> tuple[str, list[Outgoing]]:
             conn,
             t,
             f"Good news: {name} has accepted repair request #{t.ticket_number} "
-            f"({LABELS[t.category]}). They'll be in touch about the visit.",
+            f"({LABELS[t.category]}). You can message them from your request.",
         )
         return (
-            f"Thanks! You're assigned to job #{t.ticket_number}. We'll send the details next.",
+            f"Thanks! You're assigned to job #{t.ticket_number}. Text this number to message the "
+            f"customer (start with #{t.ticket_number} if you have several jobs).",
             out,
         )
 
@@ -272,3 +288,28 @@ def expire_overdue() -> int:
             out = _next_offer(conn, t) if t.status == "MATCHING" else []
         deliver(out)
     return count
+
+
+def remind_unanswered() -> int:
+    """Text handymen whose in-app offer has gone unanswered for a while (once per offer).
+
+    The wait is two minutes, or a third of the offer's time limit if that is shorter.
+    """
+    with shared_engine().begin() as conn:
+        rows = conn.execute(
+            text(
+                "UPDATE dispatch_offers o SET reminded_at = clock_timestamp() "
+                "FROM users u WHERE u.id = o.handyman_id AND o.status = 'SENT' "
+                "AND o.via_app AND o.reminded_at IS NULL AND o.expires_at > clock_timestamp() "
+                "AND o.sent_at < clock_timestamp() - make_interval(secs => "
+                " LEAST(120, EXTRACT(EPOCH FROM (o.expires_at - o.sent_at)) / 3)) "
+                "RETURNING u.phone_e164, u.sms_opted_out, o.message"
+            )
+        ).all()
+    out = [
+        Outgoing(r.phone_e164, "Reminder, still open: " + r.message)
+        for r in rows
+        if r.phone_e164 and not r.sms_opted_out
+    ]
+    deliver(out)
+    return len(rows)

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Alche Home</title>
+<link rel="stylesheet" href="messages.css">
 <style>
 body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f8f9fa;color:#2c3e50;margin:0}
 main{max-width:620px;margin:40px auto;background:#fff;padding:28px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,.06)}
@@ -33,11 +34,20 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
 .ticket .summary{margin:6px 0 0;font-size:.92rem}
 .ticket button{width:auto;margin:8px 0 0;padding:6px 12px;font-size:.85rem}
 .top .actions{display:flex;gap:8px}
+.tabs{display:flex;gap:6px;margin:10px 0}
+.tab{width:auto;margin:0;background:#fff;color:#2b5c8f;border:1px solid #2b5c8f}
+.tab.active{background:#2b5c8f;color:#fff}
+.tab .badge{margin-left:4px}
 .picker{margin-top:10px;border-top:1px solid #e2e8f0;padding-top:8px}
 .picker .hint{margin:0 0 6px;font-size:.85rem;color:#64748b}
 .picker .buttons{display:flex;gap:8px;flex-wrap:wrap}
 .picker .opt{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:.88rem}
 .picker .opt button{margin:0}
+.thread{max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
+.tmsg{padding:5px 9px;border-radius:10px;font-size:.88rem;max-width:90%;word-wrap:break-word}
+.tmsg.CUSTOMER{align-self:flex-end;background:#2b5c8f;color:#fff}
+.tmsg.HANDYMAN{align-self:flex-start;background:#e8edf3}
+.picker .buttons input{flex:1;margin:0;width:auto;min-width:0}
 .picker .star{color:#15803d;font-weight:700;font-size:.75rem}
 .EMERGENCY{background:#fdecea;border:2px solid #b42318;color:#7a1b12;font-weight:600;max-width:95%}
 .pending{opacity:.6;font-style:italic}
@@ -79,6 +89,12 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
     <pre id="profile"></pre>
     <button class="alt" onclick="refreshNow()">Refresh token</button>
   </details>
+  <div class="tabs">
+    <button id="tabChat" class="tab active" onclick="showTab('chat')">Assistant</button>
+    <button id="tabMsgs" class="tab" onclick="showTab('msgs')">Messages <span id="msgBadge" class="badge hide"></span></button>
+  </div>
+  <div id="paneMsgs" class="hide"><div id="msgsRoot"></div></div>
+  <div id="paneChat">
   <div id="chat" aria-live="polite"></div>
   <div id="previews"></div>
   <div id="composer">
@@ -87,9 +103,11 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
     <input id="text" type="text" maxlength="4000" placeholder="Describe your home repair problem..." autocomplete="off">
     <button id="send" onclick="sendMessage()">Send</button>
   </div>
+  </div>
 </section>
 </main>
 
+<script src="messages.js"></script>
 <script>
 // Dev-only: tokens live in sessionStorage. Production will use a safer scheme.
 const API = window.API_BASE || 'http://localhost:8000';
@@ -222,14 +240,21 @@ function ticketCard(t) {
     const p = el('p', 'summary', 'Looking for a handyman. This can take a few minutes.');
     card.append(p);
     watchTicket(t, card, p);
-  } else if (t.status === 'ASSIGNED') card.append(el('p', 'summary', (t.handyman_name || 'A handyman') + ' has accepted your request and will be in touch.'));
+  } else if (t.status === 'ASSIGNED' || t.status === 'IN_PROGRESS') {
+    card.append(el('p', 'summary', (t.handyman_name || 'A handyman') + ' has accepted your request.'));
+    const m = el('button', null, 'Message ' + (t.handyman_name || 'your handyman'));
+    m.onclick = () => { showTab('msgs'); msgs.open(t.id); };
+    card.append(m);
+  }
   return card;
 }
 
+
 // While we are looking for a handyman, show progress and update the card when something changes.
 function watchTicket(t, card, p) {
-  const tick = async () => {
-    if (!card.isConnected) return clearInterval(timer);
+  // The card is not on the page yet when this first runs, so only later ticks may stop on that.
+  const tick = async (first) => {
+    if (first !== true && !card.isConnected) return clearInterval(timer);
     try {
       const d = await authed('/tickets/' + t.id);
       if (d.status !== 'MATCHING') {
@@ -249,7 +274,7 @@ function watchTicket(t, card, p) {
     } catch (e) { /* keep trying; the next tick may work */ }
   };
   const timer = setInterval(tick, 5000);
-  tick();
+  tick(true);
 }
 
 // Lets the customer pick a handyman, or have us pick (best ranked first, then the next, until one accepts).
@@ -290,6 +315,15 @@ function handymanPicker(t, card) {
   buttons.append(auto, choose);
   box.append(el('p', 'hint', 'Next: pick a handyman, or let us choose. If yours is busy we move on to the next best match.'), buttons, list);
   return box;
+}
+
+let msgs = null;
+function showTab(which) {
+  $('paneChat').classList.toggle('hide', which !== 'chat');
+  $('paneMsgs').classList.toggle('hide', which !== 'msgs');
+  $('tabChat').classList.toggle('active', which === 'chat');
+  $('tabMsgs').classList.toggle('active', which === 'msgs');
+  if (which === 'msgs' && msgs) msgs.refresh();
 }
 
 async function createRequest() {
@@ -404,6 +438,11 @@ async function showApp() {
     $('signedOut').classList.add('hide');
     $('signedIn').classList.remove('hide');
     await loadChat();
+    if (msgs) msgs.stop();
+    msgs = AlcheMessages.mount($('msgsRoot'), { authed, onUnread: n => {
+      const b = $('msgBadge'); b.textContent = n; b.classList.toggle('hide', !n);
+    } });
+    showTab('chat');
   } catch (e) {
     console.error('showApp failed', e);
     if (e.status === 401) signOutLocally('Please sign in again (' + e.message + ')');
@@ -430,7 +469,10 @@ function signOutLocally(m) {
   msg(m);
 }
 
-$('text').addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+$('text').addEventListener('keydown', e => {
+  // Enter confirms a candidate in input methods (Chinese, Japanese...): do not send then.
+  if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) sendMessage();
+});
 
 (function init() {
   const hadHash = location.hash.length > 1;

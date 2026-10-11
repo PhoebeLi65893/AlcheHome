@@ -12,7 +12,7 @@ HANDYMEN = [
         ["92101", "92102", "92103"],
         4.8,
         0.95,
-        ["PLUMBING", "GENERAL"],
+        ["PLUMBING", "GENERAL", "CARPENTRY"],
     ),
     (
         "sofia@example.com",

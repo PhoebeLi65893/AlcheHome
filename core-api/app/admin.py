@@ -187,7 +187,7 @@ def assign(ticket_id: uuid.UUID, body: AssignIn, admin: Admin):
             conn,
             t,
             f"Good news: {h.display_name} has been assigned to repair request "
-            f"#{t.ticket_number} ({LABELS[t.category]}). They'll be in touch about the visit.",
+            f"#{t.ticket_number} ({LABELS[t.category]}). You can message them from your request.",
         )
         if h.phone_e164 and not h.sms_opted_out:
             out.append(

@@ -13,6 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import text
 
+from app import relay
 from app.channels import twilio
 from app.config import get_settings
 from app.conversations import active_conversation, close_active, run_turn
@@ -126,6 +127,12 @@ async def inbound_sms(request: Request, background: BackgroundTasks):
         reply, others = handle_handyman_reply(user.id, body)
         background.add_task(deliver, others)
         return twiml(reply)
+
+    with shared_engine().begin() as conn:  # a customer with an assigned job texts the handyman
+        relayed = relay.customer_text(conn, user.id, body)
+    if relayed is not None:
+        background.add_task(deliver, relayed)
+        return twiml()
 
     try:
         num_media = min(int(params.get("NumMedia", "0") or 0), MAX_PHOTOS)

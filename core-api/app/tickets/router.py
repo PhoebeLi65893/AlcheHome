@@ -3,12 +3,13 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from app import relay
 from app.auth import current_user
 from app.db import shared_engine
-from app.dispatch import MAX_ATTEMPTS, NotEligible, start_dispatch
+from app.dispatch import MAX_ATTEMPTS, NotEligible, deliver, start_dispatch
 from app.matching import find_candidates, rank
 from app.tickets.service import CARD_COLUMNS, TicketCard, card_from_row, get_card
 from app.tickets.state import InvalidTransition, transition
@@ -143,6 +144,60 @@ def find_handyman(ticket_id: uuid.UUID, body: DispatchIn, user: User):
         raise HTTPException(409, f"We are already working on request #{card.number}")
     with shared_engine().connect() as conn:
         return get_card(conn, ticket_id)
+
+
+class ThreadMessageOut(BaseModel):
+    id: str
+    sender: str  # CUSTOMER (you) or HANDYMAN
+    body: str
+    created_at: datetime
+
+
+class ThreadIn(BaseModel):
+    body: str = Field(min_length=1, max_length=relay.MAX_LEN)
+
+
+class ThreadOut(BaseModel):
+    open: bool  # can you still send messages?
+    handyman_name: str | None
+    messages: list[ThreadMessageOut]
+
+
+def _owned_ticket(conn, ticket_id, user):
+    row = conn.execute(
+        text(
+            "SELECT t.status, h.display_name FROM tickets t LEFT JOIN handymen h "
+            "ON h.user_id = t.assigned_handyman_id WHERE t.id = :t AND t.customer_id = :c"
+        ),
+        {"t": ticket_id, "c": user["id"]},
+    ).first()
+    if row is None:
+        raise HTTPException(404, "Ticket not found")
+    return row
+
+
+@router.get("/{ticket_id}/thread", response_model=ThreadOut)
+def thread(ticket_id: uuid.UUID, user: User):
+    """Your messages with the handyman on this request. No phone numbers are ever included."""
+    with shared_engine().connect() as conn:
+        t = _owned_ticket(conn, ticket_id, user)
+        messages = relay.thread(conn, ticket_id)
+    return ThreadOut(
+        open=t.status in relay.ACTIVE,
+        handyman_name=t.display_name,
+        messages=[ThreadMessageOut(**vars(m)) for m in messages],
+    )
+
+
+@router.post("/{ticket_id}/thread", response_model=ThreadOut, status_code=201)
+def send_to_handyman(ticket_id: uuid.UUID, body: ThreadIn, user: User):
+    with shared_engine().begin() as conn:
+        _owned_ticket(conn, ticket_id, user)
+        ok, out = relay.send_to_handyman(conn, ticket_id, body.body)
+    if not ok:
+        raise HTTPException(409, "Messaging opens once a handyman has accepted your request")
+    deliver(out)
+    return thread(ticket_id, user)
 
 
 @router.post("/{ticket_id}/cancel", response_model=TicketCard)

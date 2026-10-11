@@ -24,14 +24,19 @@ class GeminiResult:
     function_call: FunctionCall | None = None
 
 
-def generate(contents: list[dict], tools: list[dict] | None = None, note: str = "") -> GeminiResult:
+def generate(
+    contents: list[dict],
+    tools: list[dict] | None = None,
+    note: str = "",
+    system: str | None = None,
+) -> GeminiResult:
     """Call the Gemini API (Google AI Studio key).
 
     `tools` are function declarations Gemini may call; `note` is extra context appended to the
     system instructions (for example, that a ticket already exists).
     """
     s = get_settings()
-    system = SYSTEM_PROMPT + (f"\n\nCurrent situation: {note}" if note else "")
+    system = (system or SYSTEM_PROMPT) + (f"\n\nCurrent situation: {note}" if note else "")
     payload = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": contents,
