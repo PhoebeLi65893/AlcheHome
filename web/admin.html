@@ -29,6 +29,15 @@ th{color:#64748b;font-weight:600}
 .dim{color:#94a3b8}
 .ok{color:#15803d;font-weight:600}
 .empty{color:#94a3b8;text-align:center;margin:30px 0}
+.tabs{display:flex;gap:6px;margin:6px 0 10px}
+.tab{background:#fff;color:#2b5c8f;border:1px solid #2b5c8f}
+.tab.active{background:#2b5c8f;color:#fff}
+.addbox{border:1px dashed #94a3b8;border-radius:8px;padding:10px 12px;margin-bottom:12px}
+.addbox .row{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}
+.addbox input{flex:1;min-width:160px}
+.invite{word-break:break-all;background:#f1f5f9;padding:8px;border-radius:6px;font-size:.85rem}
+.pill{font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:10px;background:#fef3c7;color:#92400e}
+.pill.APPROVED{background:#dcfce7;color:#166534}
 </style>
 </head>
 <body>
@@ -55,7 +64,23 @@ th{color:#64748b;font-weight:600}
       <button class="alt" onclick="signOut()">Log out</button>
     </span>
   </div>
+  <div class="tabs">
+    <button id="tabTickets" class="tab active" onclick="setView('tickets')">Tickets</button>
+    <button id="tabHandymen" class="tab" onclick="setView('handymen')">Handymen</button>
+  </div>
   <div id="tickets"></div>
+  <div id="handymen" class="hide">
+    <div class="addbox">
+      <strong>Add a handyman</strong>
+      <div class="row">
+        <input id="newEmail" type="email" placeholder="Email">
+        <input id="newName" type="text" placeholder="Display name" maxlength="40">
+        <button onclick="addHandyman()">Create and get invite link</button>
+      </div>
+      <p id="inviteOut" class="invite hide"></p>
+    </div>
+    <div id="handymenList"></div>
+  </div>
 </section>
 </main>
 
@@ -129,6 +154,82 @@ async function showPanel() {
   $('who').textContent = me.email || me.id;
   $('login').classList.add('hide'); $('panel').classList.remove('hide');
   await load();
+}
+
+// ---- handymen: add, invite, approve ----
+function setView(v) {
+  $('tickets').classList.toggle('hide', v !== 'tickets');
+  $('handymen').classList.toggle('hide', v !== 'handymen');
+  $('tabTickets').classList.toggle('active', v === 'tickets');
+  $('tabHandymen').classList.toggle('active', v === 'handymen');
+  $('status').classList.toggle('hide', v !== 'tickets');
+  if (v === 'handymen') loadHandymen(); else load();
+}
+
+async function loadHandymen() {
+  msg('');
+  try {
+    const list = await authed('/admin/handymen');
+    $('handymenList').replaceChildren(...(list.length ? list.map(handymanRow)
+      : [el('p', { className: 'empty', textContent: 'No handymen yet.' })]));
+  } catch (e) { msg(e.message); }
+}
+
+function handymanRow(h) {
+  const actions = el('div', { className: 'buttons' });
+  if (h.status === 'PENDING') {
+    const ok = el('button', { textContent: 'Approve', onclick: () => act(h, 'approve') });
+    ok.disabled = !h.complete;
+    ok.title = h.complete ? '' : 'The profile needs expertise and a ZIP code first';
+    actions.append(ok);
+  } else {
+    actions.append(el('button', { className: 'alt', textContent: 'Suspend', onclick: () => act(h, 'suspend') }));
+  }
+  actions.append(el('button', { className: 'alt', textContent: 'New invite link', onclick: () => invite(h) }));
+  return el('div', { className: 'ticket ' + (h.status === 'APPROVED' ? 'MATCHING' : '') },
+    el('div', { className: 'head' },
+      el('span', { textContent: h.display_name }),
+      el('span', { className: 'pill ' + h.status, textContent: h.status })),
+    el('div', { className: 'meta', textContent:
+      [h.email || 'no email', h.phone || 'no phone', h.has_password ? 'has password' : 'invite not used yet',
+       h.is_available ? 'available' : 'on break'].join(' · ') }),
+    el('p', { className: 'summary', textContent:
+      'Expertise: ' + (h.skills.join(', ') || 'none yet') + ' · ZIPs: ' + (h.service_zips.join(', ') || 'none yet') }),
+    actions);
+}
+
+async function act(h, what) {
+  try {
+    await authed(`/admin/handymen/${h.handyman_id}/${what}`, { method: 'POST' });
+    await loadHandymen();
+  } catch (e) { msg(e.message); }
+}
+
+function showInvite(url) {
+  const p = $('inviteOut');
+  p.textContent = 'Send this link to the handyman (works once, valid 7 days): ' + url;
+  p.classList.remove('hide');
+}
+
+async function invite(h) {
+  try {
+    const r = await authed(`/admin/handymen/${h.handyman_id}/invite`, { method: 'POST' });
+    showInvite(r.invite_url);
+    window.scrollTo(0, 0);
+  } catch (e) { msg(e.message); }
+}
+
+async function addHandyman() {
+  msg('');
+  try {
+    const r = await authed('/admin/handymen', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: $('newEmail').value.trim(), display_name: $('newName').value.trim() })
+    });
+    showInvite(r.invite_url);
+    $('newEmail').value = ''; $('newName').value = '';
+    await loadHandymen();
+  } catch (e) { msg(e.status === 422 ? 'Enter a valid email and a name of at least 2 characters.' : e.message); }
 }
 
 async function load() {

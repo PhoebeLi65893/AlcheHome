@@ -34,6 +34,12 @@ button.danger{background:#fff;color:#b42318;border:1px solid #b42318}
 .ai-log .USER{align-self:flex-end;background:#2b5c8f;color:#fff}
 .ai-log .BOT{align-self:flex-start;background:#e8edf3}
 .ai-row{display:flex;gap:8px;margin-top:8px}.ai-row input{flex:1;margin:0}
+.banner{background:#fffbeb;border:1px solid #f59e0b;color:#92400e;border-radius:8px;padding:8px 12px;margin:0 0 10px}
+.checks{display:flex;flex-wrap:wrap;gap:6px 16px;margin:4px 0 10px}
+#paneProfile label{display:block;font-weight:600;margin:12px 0 4px}
+#paneProfile label.inline,#paneProfile .checks label{display:flex;gap:6px;align-items:center;font-weight:400}
+#paneProfile input[type=text],#paneProfile input[type=tel]{width:100%}
+.hint{color:#64748b;font-size:.85rem}
 .draft{margin-top:10px;border:1px dashed #2b5c8f;border-radius:8px;padding:10px;background:#f8fbff}
 .draft textarea{width:100%;min-height:70px}
 </style>
@@ -63,7 +69,9 @@ button.danger{background:#fff;color:#b42318;border:1px solid #b42318}
     <button id="tabJobs" class="tab active" onclick="showTab('jobs')">Jobs</button>
     <button id="tabMsgs" class="tab" onclick="showTab('msgs')">Messages <span id="msgBadge" class="badge hide"></span></button>
     <button id="tabAi" class="tab" onclick="showTab('ai')">Assistant</button>
+    <button id="tabProfile" class="tab" onclick="showTab('profile')">Profile</button>
   </div>
+  <div id="profileBanner" class="banner hide"></div>
 
   <div id="paneJobs">
     <h2>Job offers</h2><div id="offers"></div>
@@ -72,6 +80,31 @@ button.danger{background:#fff;color:#b42318;border:1px solid #b42318}
   </div>
 
   <div id="paneMsgs" class="hide"><div id="msgsRoot"></div></div>
+
+  <div id="paneProfile" class="hide">
+    <p id="profileStatus"></p>
+    <label>Display name (customers see this)</label>
+    <input id="pName" type="text" maxlength="40">
+    <label>Your expertise</label>
+    <div id="pSkills" class="checks"></div>
+    <label>Specialties (optional, separated by commas, e.g. hardwood floors, leak repair)</label>
+    <input id="pSpecialties" type="text" maxlength="400">
+    <label>ZIP codes you serve (separated by commas; the first is your home ZIP)</label>
+    <input id="pZips" type="text" maxlength="400" placeholder="92101, 92102, 92103">
+    <label class="inline"><input id="pAvailable" type="checkbox"> I am available for new jobs</label>
+    <div class="ai-row"><button id="pSave" onclick="saveProfile()">Save profile</button></div>
+    <h2>Phone number</h2>
+    <p id="pPhone"></p>
+    <div class="ai-row">
+      <input id="pNewPhone" type="tel" placeholder="+16195550199" autocomplete="tel">
+      <button class="alt" id="pSendCode" onclick="sendCode()">Send code</button>
+    </div>
+    <div class="ai-row hide" id="pCodeRow">
+      <input id="pCode" type="text" inputmode="numeric" maxlength="8" placeholder="6-digit code" autocomplete="one-time-code">
+      <button id="pVerify" onclick="verifyCode()">Confirm</button>
+    </div>
+    <p id="pCodeHint" class="hint"></p>
+  </div>
 
   <div id="paneAi" class="hide">
     <p>Ask for help with a job: likely causes, tools and parts, safety, or how to explain it to the customer.</p>
@@ -177,14 +210,16 @@ async function logout() {
 // ---- tabs ----
 let msgs = null, jobsTimer = null, jobsCache = { offers: [], active: [], past: [] };
 function showTab(which) {
-  for (const [k, pane] of [['jobs', 'paneJobs'], ['msgs', 'paneMsgs'], ['ai', 'paneAi']]) {
+  for (const [k, pane] of [['jobs', 'paneJobs'], ['msgs', 'paneMsgs'], ['ai', 'paneAi'], ['profile', 'paneProfile']]) {
     $(pane).classList.toggle('hide', k !== which);
   }
   $('tabJobs').classList.toggle('active', which === 'jobs');
   $('tabMsgs').classList.toggle('active', which === 'msgs');
   $('tabAi').classList.toggle('active', which === 'ai');
+  $('tabProfile').classList.toggle('active', which === 'profile');
   if (which === 'msgs' && msgs) msgs.refresh();
   if (which === 'ai') loadAi();
+  if (which === 'profile') loadProfile();
 }
 
 // ---- jobs ----
@@ -293,6 +328,70 @@ function useDraft() {
   $('draftBox').classList.add('hide');
 }
 
+// ---- profile ----
+const splitList = v => v.split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
+function showProfile(p) {
+  $('pName').value = p.display_name;
+  $('pSkills').replaceChildren(...p.skill_options.map(o => {
+    const l = el('label');
+    const c = el('input'); c.type = 'checkbox'; c.value = o.category; c.checked = p.skills.includes(o.category);
+    l.append(c, document.createTextNode(' ' + o.label));
+    return l;
+  }));
+  $('pSpecialties').value = p.specialties.join(', ');
+  $('pZips').value = p.service_zips.join(', ');
+  $('pAvailable').checked = p.is_available;
+  $('pPhone').textContent = p.phone
+    ? 'Current number: ' + p.phone + ' (offers and messages are texted here when you are not in the app).'
+    : 'No phone number yet. Add one to get offers by SMS when you are not in the app.';
+  let note = '';
+  if (!p.complete) note = 'Finish your profile (expertise and at least one ZIP code) so we can match you with jobs.';
+  else if (p.status === 'PENDING') note = 'Your profile is waiting for approval by Alche Home. You will receive job offers once it is approved.';
+  $('profileBanner').textContent = note;
+  $('profileBanner').classList.toggle('hide', !note);
+  $('profileStatus').textContent = p.status === 'APPROVED'
+    ? 'Profile approved. Changes apply to your next job offer.' : 'Profile pending approval.';
+}
+async function loadProfile() {
+  try { showProfile(await authed('/pro/profile')); } catch (e) { msg(e.message); }
+}
+async function saveProfile() {
+  $('pSave').disabled = true; msg('');
+  try {
+    const body = {
+      display_name: $('pName').value,
+      skills: [...document.querySelectorAll('#pSkills input:checked')].map(c => c.value),
+      specialties: $('pSpecialties').value.split(',').map(x => x.trim()).filter(Boolean),
+      service_zips: splitList($('pZips').value),
+      is_available: $('pAvailable').checked,
+    };
+    showProfile(await authed('/pro/profile', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(body) }));
+    msg('Profile saved.');
+  } catch (e) {
+    msg(e.status === 422 ? 'Please check your entries: ZIP codes need 5 digits and the name at least 2 characters.' : e.message);
+  }
+  $('pSave').disabled = false;
+}
+async function sendCode() {
+  $('pSendCode').disabled = true; msg('');
+  try {
+    const r = await authed('/pro/profile/phone', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ phone: $('pNewPhone').value }) });
+    $('pCodeRow').classList.remove('hide');
+    $('pCodeHint').textContent = 'We texted a code to ' + r.sent_to + ' (valid ' + r.expires_in_minutes + ' minutes).' +
+      (r.dev_code ? ' Local testing code: ' + r.dev_code : '');
+  } catch (e) { msg(e.status === 422 ? 'Enter the number like +16195550199.' : e.message); }
+  $('pSendCode').disabled = false;
+}
+async function verifyCode() {
+  $('pVerify').disabled = true; msg('');
+  try {
+    showProfile(await authed('/pro/profile/phone/verify', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ code: $('pCode').value }) }));
+    $('pCodeRow').classList.add('hide'); $('pCodeHint').textContent = ''; $('pNewPhone').value = ''; $('pCode').value = '';
+    msg('Phone number confirmed.');
+  } catch (e) { msg(e.message); }
+  $('pVerify').disabled = false;
+}
+
 // ---- start ----
 async function showApp() {
   try {
@@ -305,6 +404,7 @@ async function showApp() {
       const b = $('msgBadge'); b.textContent = n; b.classList.toggle('hide', !n);
     } });
     await loadJobs();
+    loadProfile();
     clearInterval(jobsTimer);
     jobsTimer = setInterval(loadJobs, 5000);
     showTab('jobs');

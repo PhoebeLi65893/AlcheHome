@@ -16,6 +16,8 @@ from app.config import get_settings
 from app.dispatch import expire_overdue, remind_unanswered
 from app.media import router as media_router
 from app.pro import router as pro_router
+from app.profile import admin_router as handymen_admin_router
+from app.profile import router as profile_router
 from app.threads import router as threads_router
 from app.tickets.router import router as tickets_router
 
@@ -51,12 +53,12 @@ async def lifespan(_app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="Alche Home Core API", version="0.13.0", lifespan=lifespan)
+app = FastAPI(title="Alche Home Core API", version="0.14.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(auth_router)
@@ -66,6 +68,8 @@ app.include_router(tickets_router)
 app.include_router(sms_router)
 app.include_router(admin_router)
 app.include_router(pro_router)
+app.include_router(profile_router)
+app.include_router(handymen_admin_router)
 app.include_router(threads_router)
 
 

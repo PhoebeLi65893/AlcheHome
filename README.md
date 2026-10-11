@@ -210,3 +210,13 @@ API: `GET /threads`, `GET/POST /threads/{ticket}/messages`, `GET /pro/jobs`, `PO
 **Offers and presence:** a job offer is texted to the handyman only when they are not active in the app (no request in
 the last 2 minutes). An active handyman sees it in the Jobs tab; if they have not answered after about 2 minutes (or a third
 of the offer's time limit if shorter) they get one SMS reminder.
+
+## T13-2-1 demo: handyman profile
+
+Ops page (`/admin.html` > **Handymen**): add a handyman (email + name) to get a one-time invite link, and approve or
+suspend profiles. The handyman opens the link, sets a password and fills in **Profile** on `/handyman.html`: display
+name, expertise (wood and flooring, pipes, electrical, heating and cooling, appliances, general), optional
+specialties, ZIP codes (the first is the home ZIP) and availability. A phone number is stored only after an SMS
+code (shown in the response when `APP_ENV=local`). New profiles are PENDING until an admin approves them; later edits
+apply immediately. API: `GET/PUT /pro/profile`, `POST /pro/profile/phone`, `POST /pro/profile/phone/verify`,
+`GET/POST /admin/handymen`, `POST /admin/handymen/{id}/approve|suspend|invite`.
