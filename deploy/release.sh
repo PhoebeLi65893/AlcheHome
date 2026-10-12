@@ -58,10 +58,11 @@ smoke_api() { # base url
   local base="$1"
   wait_for "$base/health" '"status":"ok"' "API /health" || return 1
   # The API must be talking to its database: a wrong login is answered 401, not 5xx.
+  # (The address must pass email validation, so a reserved ".invalid" domain would give 422.)
   local code
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$base/auth/login" \
     -H 'Content-Type: application/json' \
-    -d '{"email":"smoke-test@example.invalid","password":"not-a-real-password"}')"
+    -d '{"email":"smoke-test@example.com","password":"not-a-real-password"}')"
   [ "$code" = "401" ] || { echo "login check returned HTTP $code (expected 401)" >&2; return 1; }
   echo "ok: API reaches its database"
 }
