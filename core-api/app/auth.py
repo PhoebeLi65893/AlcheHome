@@ -171,7 +171,7 @@ def current_user(creds: Annotated[HTTPAuthorizationCredentials | None, Depends(b
             conn.execute(
                 text(
                     "SELECT id, role, email, display_name, phone_e164, preferred_channel, "
-                    "created_at FROM users WHERE id = :i"
+                    "language, created_at FROM users WHERE id = :i"
                 ),
                 {"i": payload["sub"]},
             )

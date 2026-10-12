@@ -14,24 +14,24 @@ from dataclasses import dataclass
 
 from sqlalchemy import text
 
+from app import i18n
 from app.channels import twilio
 from app.config import get_settings
 from app.conversations import store_message
 from app.db import shared_engine
 from app.matching import find_candidates, rank
-from app.tickets.service import LABELS, get_card
+from app.tickets.service import get_card
 from app.tickets.state import transition
 
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 5
 TIMEOUT_SECONDS = {"EMERGENCY": 3 * 60, "SAME_DAY": 15 * 60, "FLEXIBLE": 2 * 60 * 60}
-WHEN = {"EMERGENCY": "emergency", "SAME_DAY": "today", "FLEXIBLE": "flexible timing"}
 REPLY_RE = re.compile(
-    r"^\s*(ACCEPT|ACCEPTED|YES|Y|DECLINE|NO|N)\b\s*#?\s*(\d+)?\s*[.!]*\s*$", re.IGNORECASE
+    r"^\s*(ACCEPT|ACCEPTED|YES|Y|DECLINE|NO|N|接受|接单|同意|拒绝|不接)\s*#?\s*(\d+)?\s*[.!。！]*\s*$",
+    re.IGNORECASE,
 )
-ACCEPT_WORDS = {"ACCEPT", "ACCEPTED", "YES", "Y"}
-HELP_REPLY = "To answer a job offer reply ACCEPT <number> or DECLINE <number>, e.g. ACCEPT 1024."
+ACCEPT_WORDS = {"ACCEPT", "ACCEPTED", "YES", "Y", "接受", "接单", "同意"}
 
 
 @dataclass(frozen=True)
@@ -44,17 +44,17 @@ def timeout_seconds(urgency: str) -> float:
     return get_settings().dispatch_timeout_s or TIMEOUT_SECONDS[urgency]
 
 
-def _minutes(seconds: float) -> str:
-    m = round(seconds / 60)
-    return f"{m} min" if m < 120 else f"{round(m / 60)} h"
-
-
-def offer_text(t, seconds: float) -> str:
+def offer_text(t, seconds: float, lang: str = "en") -> str:
     summary = t.issue_summary if len(t.issue_summary) <= 140 else t.issue_summary[:137] + "..."
-    return (
-        f"Alche Home job #{t.ticket_number}: {LABELS[t.category]}, {WHEN[t.urgency]}, "
-        f"ZIP {t.location_zip}. {summary} Reply ACCEPT {t.ticket_number} to take it or "
-        f"DECLINE {t.ticket_number}. Expires in {_minutes(seconds)}."
+    return i18n.t(
+        lang,
+        "offer",
+        n=t.ticket_number,
+        cat=i18n.category(lang, t.category),
+        when=i18n.when(lang, t.urgency),
+        zip=t.location_zip,
+        summary=summary,
+        mins=i18n.duration(lang, seconds),
     )
 
 
@@ -76,17 +76,23 @@ def _ticket(conn, ticket_id, lock=False):
     ).one()
 
 
-def notify_customer(conn, t, body: str) -> list[Outgoing]:
-    """Post an update into the customer's conversation (and text it if they use SMS)."""
+def notify_customer(conn, t, key: str, **kw) -> list[Outgoing]:
+    """Post an update into the customer's conversation (and text it if they use SMS).
+
+    `key` names the text in app.i18n; it is written in the customer's own language.
+    """
     row = conn.execute(
         text(
-            "SELECT c.id, c.channel, u.phone_e164, u.sms_opted_out FROM conversations c "
-            "JOIN users u ON u.id = c.user_id WHERE c.ticket_id = :t"
+            "SELECT c.id, c.channel, u.phone_e164, u.sms_opted_out, u.language "
+            "FROM conversations c JOIN users u ON u.id = c.user_id WHERE c.ticket_id = :t"
         ),
         {"t": t.id},
     ).first()
     if row is None:
         return []
+    if "cat" not in kw and key in ("customer_accepted", "customer_assigned"):
+        kw["cat"] = i18n.category(row.language, t.category)
+    body = i18n.t(row.language, key, n=t.ticket_number, **kw)
     store_message(conn, str(row.id), "BOT", body, ticket=get_card(conn, t.id))
     if row.channel == "SMS" and row.phone_e164 and not row.sms_opted_out:
         return [Outgoing(row.phone_e164, body)]
@@ -114,21 +120,17 @@ def _next_offer(conn, t, preferred: str | None = None) -> list[Outgoing]:
     if nxt is None:
         transition(conn, t.id, "UNMATCHED", "dispatch")
         logger.info("Ticket #%s is UNMATCHED after %d offers", t.ticket_number, len(tried))
-        return notify_customer(
-            conn,
-            t,
-            f"We couldn't find an available handyman for request #{t.ticket_number} yet. "
-            "Our team has been alerted and will follow up.",
-        )
+        return notify_customer(conn, t, "unmatched")
     seconds = timeout_seconds(t.urgency)
-    body = offer_text(t, seconds)
     contact = conn.execute(
         text(
-            "SELECT phone_e164, COALESCE(last_seen_at > now() - interval '2 minutes', FALSE) "
+            "SELECT phone_e164, language, "
+            "COALESCE(last_seen_at > now() - interval '2 minutes', FALSE) "
             "AS active FROM users WHERE id = :h"
         ),
         {"h": nxt.candidate.handyman_id},
     ).one()
+    body = offer_text(t, seconds, contact.language)
     # A handyman who has the app open sees the offer there, so we do not text them as well.
     # If they have not answered after a while, remind_unanswered() texts them.
     via_app = bool(contact.active)
@@ -187,6 +189,9 @@ def handle_handyman_reply(user_id, body: str) -> tuple[str, list[Outgoing]]:
     accept = m.group(1).upper() in ACCEPT_WORDS
     number = int(m.group(2)) if m.group(2) else None
     with shared_engine().begin() as conn:
+        lang = conn.execute(
+            text("SELECT language FROM users WHERE id = :u"), {"u": user_id}
+        ).scalar()
         pending = conn.execute(
             text(
                 "SELECT o.id, o.ticket_id, t.ticket_number FROM dispatch_offers o "
@@ -198,13 +203,11 @@ def handle_handyman_reply(user_id, body: str) -> tuple[str, list[Outgoing]]:
             {"h": user_id, "n": number},
         ).all()
         if not pending:
-            what = f"Job #{number} is" if number else "That job is"
-            return f"{what} no longer available. Thanks for responding.", []
+            if number:
+                return i18n.t(lang, "job_gone", n=number), []
+            return i18n.t(lang, "job_gone_any"), []
         if len(pending) > 1:
-            return (
-                "You have more than one open offer. Reply with the job number, e.g. ACCEPT 1024.",
-                [],
-            )
+            return i18n.t(lang, "several_offers"), []
         offer = pending[0]
         t = _ticket(conn, offer.ticket_id, lock=True)
         cur = conn.execute(
@@ -214,7 +217,7 @@ def handle_handyman_reply(user_id, body: str) -> tuple[str, list[Outgoing]]:
             ),
             {"o": offer.id},
         ).one()
-        gone = f"Job #{t.ticket_number} is no longer available. Thanks for responding."
+        gone = i18n.t(lang, "job_gone", n=t.ticket_number)
         if cur.status != "SENT":
             return gone, []
         if t.status != "MATCHING":  # the customer cancelled, or it was assigned elsewhere
@@ -225,7 +228,7 @@ def handle_handyman_reply(user_id, body: str) -> tuple[str, list[Outgoing]]:
             return gone, _next_offer(conn, t)
         if not accept:
             _close(conn, offer.id, "DECLINED")
-            return f"No problem, we've passed job #{t.ticket_number} on.", _next_offer(conn, t)
+            return i18n.t(lang, "passed_on", n=t.ticket_number), _next_offer(conn, t)
         _close(conn, offer.id, "ACCEPTED")
         conn.execute(
             text("UPDATE tickets SET assigned_handyman_id = :h WHERE id = :t"),
@@ -235,17 +238,8 @@ def handle_handyman_reply(user_id, body: str) -> tuple[str, list[Outgoing]]:
         name = conn.execute(
             text("SELECT display_name FROM handymen WHERE user_id = :h"), {"h": user_id}
         ).scalar()
-        out = notify_customer(
-            conn,
-            t,
-            f"Good news: {name} has accepted repair request #{t.ticket_number} "
-            f"({LABELS[t.category]}). You can message them from your request.",
-        )
-        return (
-            f"Thanks! You're assigned to job #{t.ticket_number}. Text this number to message the "
-            f"customer (start with #{t.ticket_number} if you have several jobs).",
-            out,
-        )
+        out = notify_customer(conn, t, "customer_accepted", name=name)
+        return i18n.t(lang, "assigned_reply", n=t.ticket_number), out
 
 
 def _close(conn, offer_id, status: str) -> None:
@@ -303,11 +297,11 @@ def remind_unanswered() -> int:
                 "AND o.via_app AND o.reminded_at IS NULL AND o.expires_at > clock_timestamp() "
                 "AND o.sent_at < clock_timestamp() - make_interval(secs => "
                 " LEAST(120, EXTRACT(EPOCH FROM (o.expires_at - o.sent_at)) / 3)) "
-                "RETURNING u.phone_e164, u.sms_opted_out, o.message"
+                "RETURNING u.phone_e164, u.sms_opted_out, u.language, o.message"
             )
         ).all()
     out = [
-        Outgoing(r.phone_e164, "Reminder, still open: " + r.message)
+        Outgoing(r.phone_e164, i18n.t(r.language, "reminder") + r.message)
         for r in rows
         if r.phone_e164 and not r.sms_opted_out
     ]

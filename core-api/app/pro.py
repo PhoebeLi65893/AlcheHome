@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from app import relay
+from app import i18n, relay
 from app.agent import gemini
 from app.agent.pro_prompt import PRO_PROMPT
 from app.auth import TokenOut, current_user, issue_tokens
@@ -33,8 +33,6 @@ def handyman_user(user: Annotated[dict, Depends(current_user)]) -> dict:
 
 Pro = Annotated[dict, Depends(handyman_user)]
 HISTORY_TURNS = 20
-UNAVAILABLE = "The assistant is not configured yet (no GEMINI_API_KEY). Please try again later."
-FALLBACK = "Sorry, the assistant is having trouble right now. Please try again in a moment."
 
 
 class Job(BaseModel):
@@ -261,14 +259,18 @@ def _contents(rows, extra_user: str | None = None) -> list[dict]:
     return contents
 
 
-def _ask(contents, note: str) -> str | None:
+def _ask(contents, note: str, lang: str = "en") -> str | None:
+    """The assistant's answer, or None when it is not configured or the call failed."""
     if not get_settings().gemini_api_key:
         return None
+    lang_note = i18n.t(lang, "note_lang")
     try:
-        return gemini.generate(contents, system=PRO_PROMPT, note=note).text or FALLBACK
+        return gemini.generate(
+            contents, system=PRO_PROMPT, note=(note + " " + lang_note).strip()
+        ).text
     except (gemini.GeminiError, httpx.HTTPError) as e:
         logger.warning("Handyman assistant call failed: %s", type(e).__name__)
-        return FALLBACK
+        return None
 
 
 @router.get("/jobs/{ticket_id}/assistant", response_model=list[AssistantMsg])
@@ -292,7 +294,11 @@ def assistant(ticket_id: uuid.UUID, body: AssistantIn, user: Pro):
             {"h": user["id"], "t": ticket_id, "b": text_in},
         )
         rows = _history(conn, ticket_id, user["id"])
-    reply = _ask(_contents(rows), note) or UNAVAILABLE
+    lang = user.get("language")
+    reply = _ask(_contents(rows), note, lang)
+    if not reply:
+        configured = bool(get_settings().gemini_api_key)
+        reply = i18n.t(lang, "pro_fallback" if configured else "pro_unavailable")
     with shared_engine().begin() as conn:
         conn.execute(
             text(
@@ -329,11 +335,14 @@ def draft_reply(ticket_id: uuid.UUID, user: Pro):
         + (f", answering their latest message. Recent messages:\n{convo}" if convo else "")
         + "\nOutput only the message text, no quotes, under 300 characters."
     )
-    drafted = _ask(_contents(rows, ask), note)
-    if drafted is None or drafted == FALLBACK:
-        drafted = (
-            f"Hi, this is {name} from Alche Home. I'll take care of your "
-            f"{LABELS[label.category].lower()} request (#{label.ticket_number}). "
-            "When is a good time for me to come by?"
+    lang = user.get("language")
+    drafted = _ask(_contents(rows, ask), note, lang)
+    if not drafted:
+        drafted = i18n.t(
+            lang,
+            "draft_fallback",
+            name=name,
+            cat=i18n.category(lang, label.category).lower(),
+            n=label.ticket_number,
         )
     return Draft(draft=drafted.strip()[: relay.MAX_LEN])

@@ -55,18 +55,22 @@ class ThreadList(BaseModel):
 class ChatMessage(BaseModel):
     id: str
     mine: bool
-    body: str
+    body: str  # what you read: the translation into your language when there is one
     created_at: datetime
+    original: str | None = None  # the sender's own words, when body is a translation
+    translated: bool = False
 
 
 class ChatOut(BaseModel):
     ticket_id: str
     number: int
+    category: str
     category_label: str
     status: str
     issue_summary: str
     location_zip: str
     counterpart: str
+    counterpart_phone: str | None = None  # the handyman's number, only if they share it
     open: bool
     other_read_at: datetime | None  # when the other person last opened the conversation
     messages: list[ChatMessage]
@@ -96,7 +100,10 @@ def list_threads(user: User):
             text(
                 f"SELECT t.id, t.ticket_number, t.category, t.status, "
                 f"h.display_name AS handyman_name, cu.display_name AS customer_name, "
-                f"last.body AS last_body, last.created_at AS last_at, last.sender AS last_sender, "
+                f"CASE WHEN last.sender <> :mine "
+                f"THEN COALESCE(last.translations ->> :lang, last.body) "
+                f"ELSE last.body END AS last_body, "
+                f"last.created_at AS last_at, last.sender AS last_sender, "
                 f"(SELECT count(*) FROM messages m WHERE m.relay_ticket_id = t.id "
                 f" AND m.sender <> :mine "
                 f" AND m.created_at > COALESCE(tr.last_read_at, 'epoch'::timestamptz)) AS unread "
@@ -104,13 +111,18 @@ def list_threads(user: User):
                 f"JOIN users cu ON cu.id = t.customer_id "
                 f"LEFT JOIN handymen h ON h.user_id = t.assigned_handyman_id "
                 f"LEFT JOIN thread_reads tr ON tr.ticket_id = t.id AND tr.user_id = :u "
-                f"LEFT JOIN LATERAL (SELECT body, created_at, sender FROM messages "
+                f"LEFT JOIN LATERAL (SELECT body, created_at, sender, translations FROM messages "
                 f" WHERE relay_ticket_id = t.id ORDER BY created_at DESC LIMIT 1) last ON TRUE "
                 f"WHERE t.{col} = :u AND t.assigned_handyman_id IS NOT NULL "
                 f"AND (t.status = ANY(:active) OR last.body IS NOT NULL) "
                 f"ORDER BY COALESCE(last.created_at, t.updated_at) DESC LIMIT 100"
             ),
-            {"u": user["id"], "mine": mine, "active": list(relay.ACTIVE)},
+            {
+                "u": user["id"],
+                "mine": mine,
+                "active": list(relay.ACTIVE),
+                "lang": user.get("language") or "en",
+            },
         ).all()
     threads = [
         ThreadSummary(
@@ -133,15 +145,32 @@ def list_threads(user: User):
     return ThreadList(threads=threads, unread_total=sum(t.unread for t in threads))
 
 
+def _chat_message(r, mine: str, lang: str) -> ChatMessage:
+    own = r.sender == mine
+    shown = None if own else (r.translations or {}).get(lang)
+    if shown and shown != r.body:
+        return ChatMessage(
+            id=str(r.id),
+            mine=False,
+            body=shown,
+            created_at=r.created_at,
+            original=r.body,
+            translated=True,
+        )
+    return ChatMessage(id=str(r.id), mine=own, body=r.body, created_at=r.created_at)
+
+
 def _chat(conn, ticket_id, user, mark_read: bool) -> ChatOut:
     col, mine = _side(user)
     t = conn.execute(
         text(
             f"SELECT t.id, t.ticket_number, t.category, t.status, t.issue_summary, "
             f"t.location_zip, t.customer_id, t.assigned_handyman_id, "
-            f"h.display_name AS handyman_name, cu.display_name AS customer_name "
+            f"h.display_name AS handyman_name, cu.display_name AS customer_name, "
+            f"h.share_phone, hu.phone_e164 AS handyman_phone "
             f"FROM tickets t JOIN users cu ON cu.id = t.customer_id "
             f"LEFT JOIN handymen h ON h.user_id = t.assigned_handyman_id "
+            f"LEFT JOIN users hu ON hu.id = t.assigned_handyman_id "
             f"WHERE t.id = :t AND t.{col} = :u"
         ),
         {"t": ticket_id, "u": user["id"]},
@@ -151,8 +180,8 @@ def _chat(conn, ticket_id, user, mark_read: bool) -> ChatOut:
     other_id = t.assigned_handyman_id if user["role"] != "HANDYMAN" else t.customer_id
     rows = conn.execute(
         text(
-            "SELECT id, sender, body, created_at FROM messages WHERE relay_ticket_id = :t "
-            "ORDER BY created_at, id"
+            "SELECT id, sender, body, translations, created_at FROM messages "
+            "WHERE relay_ticket_id = :t ORDER BY created_at, id"
         ),
         {"t": ticket_id},
     ).all()
@@ -171,6 +200,7 @@ def _chat(conn, ticket_id, user, mark_read: bool) -> ChatOut:
     return ChatOut(
         ticket_id=str(t.id),
         number=t.ticket_number,
+        category=t.category,
         category_label=LABELS[t.category],
         status=t.status,
         issue_summary=t.issue_summary,
@@ -178,12 +208,14 @@ def _chat(conn, ticket_id, user, mark_read: bool) -> ChatOut:
         counterpart=(t.handyman_name or "Handyman")
         if user["role"] != "HANDYMAN"
         else _first_name(t.customer_name),
+        counterpart_phone=(
+            t.handyman_phone
+            if user["role"] != "HANDYMAN" and t.share_phone and t.status in relay.ACTIVE
+            else None
+        ),
         open=t.status in relay.ACTIVE,
         other_read_at=other_read,
-        messages=[
-            ChatMessage(id=str(r.id), mine=r.sender == mine, body=r.body, created_at=r.created_at)
-            for r in rows
-        ],
+        messages=[_chat_message(r, mine, user.get("language") or "en") for r in rows],
     )
 
 

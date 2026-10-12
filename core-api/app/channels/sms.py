@@ -13,7 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import text
 
-from app import relay
+from app import i18n, relay
 from app.channels import twilio
 from app.config import get_settings
 from app.conversations import active_conversation, close_active, run_turn
@@ -31,11 +31,8 @@ STOP_WORDS = {"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REVOKE
 START_WORDS = {"START", "UNSTOP", "YES"}
 HELP_WORDS = {"HELP", "INFO"}
 NEW_WORDS = {"NEW", "RESET"}
-NEW_REPLY = "OK, starting a new request. What's the problem you need help with?"
-FALLBACK_REPLY = (
-    "Sorry, something went wrong on our side. If this is an emergency, call 911. "
-    "Otherwise please text us again in a moment."
-)
+NEW_REPLY = i18n.t("en", "new_request")  # English text, for reference and tests
+LANG_WORDS = {"ENGLISH": "en", "EN": "en", "中文": "zh", "ZH": "zh", "CHINESE": "zh"}
 
 
 def twiml(message: str | None = None) -> Response:
@@ -77,7 +74,8 @@ def sms_user(conn, phone: str):
         {"p": phone},
     )
     return conn.execute(
-        text("SELECT id, role, sms_opted_out FROM users WHERE phone_e164 = :p"), {"p": phone}
+        text("SELECT id, role, sms_opted_out, language FROM users WHERE phone_e164 = :p"),
+        {"p": phone},
     ).one()
 
 
@@ -118,10 +116,16 @@ async def inbound_sms(request: Request, background: BackgroundTasks):
         if word in HELP_WORDS or user.sms_opted_out:
             return twiml()
         handyman = user.role == "HANDYMAN"
+        if word in LANG_WORDS:  # texting ENGLISH or 中文 switches the language of replies
+            new_lang = LANG_WORDS[word]
+            conn.execute(
+                text("UPDATE users SET language = :l WHERE id = :u"), {"l": new_lang, "u": user.id}
+            )
+            return twiml(i18n.t(new_lang, "lang_set"))
         if word in NEW_WORDS:
             close_active(conn, user.id, "SMS")
             active_conversation(conn, user.id, "SMS")
-            return twiml(NEW_REPLY)
+            return twiml(i18n.t(user.language, "new_request"))
 
     if handyman:  # job offers: ACCEPT / DECLINE, answered right in the webhook response
         reply, others = handle_handyman_reply(user.id, body)
@@ -170,6 +174,10 @@ def handle_sms(user_id, phone: str, body: str, media_urls: list[str], sid: str) 
     except Exception:
         logger.exception("SMS handling failed for %s", twilio.mask(phone))
         try:
-            twilio.send_sms(phone, FALLBACK_REPLY)
+            with shared_engine().connect() as conn:
+                lang = conn.execute(
+                    text("SELECT language FROM users WHERE id = :u"), {"u": user_id}
+                ).scalar()
+            twilio.send_sms(phone, i18n.t(lang, "sms_error"))
         except twilio.TwilioError:
             pass

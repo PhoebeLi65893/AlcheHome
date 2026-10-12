@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Alche Home Pro</title>
-<link rel="stylesheet" href="messages.css">
+<link rel="stylesheet" href="messages.css?v=16">
 <style>
 body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f8f9fa;color:#2c3e50;margin:0}
 main{max-width:860px;margin:30px auto;background:#fff;padding:24px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,.06)}
@@ -92,6 +92,8 @@ button.danger{background:#fff;color:#b42318;border:1px solid #b42318}
     <label>ZIP codes you serve (separated by commas; the first is your home ZIP)</label>
     <input id="pZips" type="text" maxlength="400" placeholder="92101, 92102, 92103">
     <label class="inline"><input id="pAvailable" type="checkbox"> I am available for new jobs</label>
+    <label class="inline"><input id="pShare" type="checkbox"> Show my phone number to the customer once I accept their job</label>
+    <p class="hint">Customers who book you see this number and can call you from their own phone. It is off by default.</p>
     <div class="ai-row"><button id="pSave" onclick="saveProfile()">Save profile</button></div>
     <h2>Phone number</h2>
     <p id="pPhone"></p>
@@ -124,7 +126,8 @@ button.danger{background:#fff;color:#b42318;border:1px solid #b42318}
 </section>
 </main>
 
-<script src="messages.js"></script>
+<script src="i18n.js?v=16"></script>
+<script src="messages.js?v=16"></script>
 <script>
 // Dev-only: tokens live in sessionStorage, like the other pages.
 const API = window.API_BASE || 'http://localhost:8000';
@@ -148,7 +151,7 @@ async function api(path, opts = {}) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const d = body && body.detail;
-    throw Object.assign(new Error(typeof d === 'string' ? d : 'Request failed'), { status: res.status });
+    throw Object.assign(new Error(typeof d === 'string' ? I18N.err(d) : _('Request failed')), { status: res.status });
   }
   return body;
 }
@@ -180,7 +183,7 @@ async function login() {
       body: JSON.stringify({ email: $('email').value.trim(), password: $('password').value }) }));
     $('password').value = '';
     await showApp();
-  } catch (e) { msg(e.status === 401 ? 'Wrong email or password.' : e.message); }
+  } catch (e) { msg(e.status === 401 ? _('Wrong email or password.') : e.message); }
 }
 async function setPassword() {
   msg('');
@@ -226,23 +229,25 @@ function showTab(which) {
 function jobCard(j, kind) {
   const c = el('div', 'job' + (kind === 'offer' ? ' offer' : ''));
   const head = el('div', 'head');
-  head.append(el('span', null, '#' + j.number + ' · ' + j.category_label + ' · ' + j.urgency.replace('_', ' ')),
-    el('span', 'status', j.status.replace('_', ' ')));
-  const meta = el('div', 'meta', 'ZIP ' + j.location_zip + ' · Customer: ' + j.customer +
-    (j.severity ? ' · Severity: ' + j.severity : ''));
-  c.append(head, meta, el('p', null, j.issue_summary));
+  head.append(el('span', null, '#' + j.number + ' · ' + _(j.category) + ' · ' + _(j.urgency)),
+    el('span', 'status', _(j.status)));
+  const meta = el('div', 'meta', _('ZIP {zip} · Customer: {name}', { zip: j.location_zip, name: j.customer === 'Customer' ? _('Customer') : j.customer }) +
+    (j.severity ? _(' · Severity: {s}', { s: _(j.severity) }) : ''));
+  const summary = el('p', null, j.issue_summary);
+  summary.setAttribute('data-notranslate', '');   // the customer's own words
+  c.append(head, meta, summary);
   const b = el('div', 'buttons');
   if (kind === 'offer') {
     const mins = j.expires_at ? Math.max(0, Math.ceil((new Date(j.expires_at) - Date.now()) / 60000)) : null;
-    if (mins !== null) c.insertBefore(el('div', 'meta', 'Offer expires in about ' + mins + ' min'), c.children[2]);
-    const ok = el('button', null, 'Accept'), no = el('button', 'danger', 'Decline');
+    if (mins !== null) c.insertBefore(el('div', 'meta', _('Offer expires in about {mins} min', { mins })), c.children[2]);
+    const ok = el('button', null, _('Accept')), no = el('button', 'danger', _('Decline'));
     ok.onclick = () => answer(j, 'accept', ok, no);
     no.onclick = () => answer(j, 'decline', ok, no);
     b.append(ok, no);
   } else if (kind === 'active') {
-    const m = el('button', null, 'Messages' + (j.unread ? ' (' + j.unread + ' new)' : ''));
+    const m = el('button', null, j.unread ? _('Messages ({n} new)', { n: j.unread }) : _('Messages'));
     m.onclick = () => { showTab('msgs'); msgs.open(j.ticket_id); };
-    const a = el('button', 'alt', 'Ask the assistant');
+    const a = el('button', 'alt', _('Ask the assistant'));
     a.onclick = () => { showTab('ai'); $('aiJob').value = j.ticket_id; loadAi(); };
     b.append(m, a);
   }
@@ -253,7 +258,7 @@ async function answer(j, what, ok, no) {
   ok.disabled = no.disabled = true; msg('');
   try {
     const r = await authed('/pro/jobs/' + j.ticket_id + '/' + what, { method: 'POST' });
-    msg(what === 'accept' ? 'Job #' + j.number + ' is yours. Say hello to the customer in Messages.' : 'Declined job #' + j.number + '.');
+    msg(what === 'accept' ? _('Job #{n} is yours. Say hello to the customer in Messages.', { n: j.number }) : _('Declined job #{n}.', { n: j.number }));
     await loadJobs();
     if (what === 'accept' && r.status === 'ASSIGNED') showTab('jobs');
   } catch (e) { msg(e.message); await loadJobs(); }
@@ -261,32 +266,37 @@ async function answer(j, what, ok, no) {
 async function loadJobs() {
   try {
     jobsCache = await authed('/pro/jobs');
-  } catch (e) { if (e.status === 401) signedOut('Please log in again.'); return; }
+  } catch (e) { if (e.status === 401) signedOut(_('Please log in again.')); return; }
   // Only touch the page when the data changed, so open dropdowns and clicks are not disturbed.
-  const sig = JSON.stringify(jobsCache, (k, v) => k === 'expires_at' ? undefined : v);
+  const sig = JSON.stringify([I18N.lang(), jobsCache], (k, v) => k === 'expires_at' ? undefined : v);
   if (sig === loadJobs.sig) return;
   loadJobs.sig = sig;
   const fill = (id, list, kind, empty) => $(id).replaceChildren(...(list.length ? list.map(j => jobCard(j, kind)) : [el('p', 'empty', empty)]));
   // Tell the handyman about new offers even when this tab is in the background.
   const n = jobsCache.offers.length;
-  document.title = (n ? '(' + n + ') New job offer - ' : '') + 'Alche Home Pro';
-  fill('offers', jobsCache.offers, 'offer', 'No open offers right now.');
-  fill('active', jobsCache.active, 'active', 'No active jobs.');
-  fill('past', jobsCache.past, 'past', 'Nothing yet.');
+  document.title = (n ? _('({n}) New job offer - ', { n }) : '') + _('Alche Home Pro');
+  fill('offers', jobsCache.offers, 'offer', _('No open offers right now.'));
+  fill('active', jobsCache.active, 'active', _('No active jobs.'));
+  fill('past', jobsCache.past, 'past', _('Nothing yet.'));
   const sel = $('aiJob'), prev = sel.value;
   const all = [...jobsCache.offers, ...jobsCache.active, ...jobsCache.past];
-  sel.replaceChildren(...all.map(j => { const o = el('option', null, '#' + j.number + ' ' + j.category_label + ' (' + j.status.replace('_', ' ').toLowerCase() + ')'); o.value = j.ticket_id; return o; }));
+  sel.replaceChildren(...all.map(j => { const o = el('option', null, '#' + j.number + ' ' + _(j.category) + ' (' + _(j.status) + ')'); o.value = j.ticket_id; return o; }));
   if (prev && all.some(j => j.ticket_id === prev)) sel.value = prev;
 }
 
 // ---- assistant ----
+function aiMsg(m) {
+  const d = el('div', 'm ' + m.sender, m.body);
+  d.setAttribute('data-notranslate', '');
+  return d;
+}
 async function loadAi() {
   const id = $('aiJob').value;
   const log = $('aiLog');
-  if (!id) { log.replaceChildren(el('p', 'empty', 'You have no jobs to ask about yet.')); return; }
+  if (!id) { log.replaceChildren(el('p', 'empty', _('You have no jobs to ask about yet.'))); return; }
   try {
     const rows = await authed('/pro/jobs/' + id + '/assistant');
-    log.replaceChildren(...(rows.length ? rows.map(m => el('div', 'm ' + m.sender, m.body)) : [el('p', 'empty', 'Ask anything about this job.')]));
+    log.replaceChildren(...(rows.length ? rows.map(m => aiMsg(m)) : [el('p', 'empty', _('Ask anything about this job.'))]));
     log.scrollTop = log.scrollHeight;
   } catch (e) { msg(e.message); }
 }
@@ -295,12 +305,12 @@ async function askAi() {
   if (!id || !body) return;
   $('aiSend').disabled = true; msg('');
   const log = $('aiLog');
-  log.append(el('div', 'm USER', body), el('div', 'm BOT', 'Thinking...'));
+  log.append(aiMsg({ sender: 'USER', body }), el('div', 'm BOT', _('Thinking...')));
   log.scrollTop = log.scrollHeight;
   input.value = '';
   try {
     const rows = await authed('/pro/jobs/' + id + '/assistant', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ body }) });
-    log.replaceChildren(...rows.map(m => el('div', 'm ' + m.sender, m.body)));
+    log.replaceChildren(...rows.map(m => aiMsg(m)));
     log.scrollTop = log.scrollHeight;
   } catch (e) { msg(e.message); input.value = body; await loadAi(); }
   $('aiSend').disabled = false;
@@ -322,7 +332,7 @@ async function makeDraft() {
 function useDraft() {
   const id = $('aiJob').value, text = $('draftText').value.trim();
   const job = jobsCache.active.find(j => j.ticket_id === id);
-  if (!job) { msg('Messages open once you have accepted this job.'); return; }
+  if (!job) { msg(_('Messages open once you have accepted this job.')); return; }
   showTab('msgs');
   msgs.open(id).then(() => msgs.prefill(text));
   $('draftBox').classList.add('hide');
@@ -335,22 +345,23 @@ function showProfile(p) {
   $('pSkills').replaceChildren(...p.skill_options.map(o => {
     const l = el('label');
     const c = el('input'); c.type = 'checkbox'; c.value = o.category; c.checked = p.skills.includes(o.category);
-    l.append(c, document.createTextNode(' ' + o.label));
+    l.append(c, document.createTextNode(' ' + _(o.label)));
     return l;
   }));
   $('pSpecialties').value = p.specialties.join(', ');
   $('pZips').value = p.service_zips.join(', ');
   $('pAvailable').checked = p.is_available;
+  $('pShare').checked = !!p.share_phone;
   $('pPhone').textContent = p.phone
-    ? 'Current number: ' + p.phone + ' (offers and messages are texted here when you are not in the app).'
-    : 'No phone number yet. Add one to get offers by SMS when you are not in the app.';
+    ? _('Current number: {phone} (offers and messages are texted here when you are not in the app).', { phone: p.phone })
+    : _('No phone number yet. Add one to get offers by SMS when you are not in the app.');
   let note = '';
-  if (!p.complete) note = 'Finish your profile (expertise and at least one ZIP code) so we can match you with jobs.';
-  else if (p.status === 'PENDING') note = 'Your profile is waiting for approval by Alche Home. You will receive job offers once it is approved.';
+  if (!p.complete) note = _('Finish your profile (expertise and at least one ZIP code) so we can match you with jobs.');
+  else if (p.status === 'PENDING') note = _('Your profile is waiting for approval by Alche Home. You will receive job offers once it is approved.');
   $('profileBanner').textContent = note;
   $('profileBanner').classList.toggle('hide', !note);
   $('profileStatus').textContent = p.status === 'APPROVED'
-    ? 'Profile approved. Changes apply to your next job offer.' : 'Profile pending approval.';
+    ? _('Profile approved. Changes apply to your next job offer.') : _('Profile pending approval.');
 }
 async function loadProfile() {
   try { showProfile(await authed('/pro/profile')); } catch (e) { msg(e.message); }
@@ -364,11 +375,12 @@ async function saveProfile() {
       specialties: $('pSpecialties').value.split(',').map(x => x.trim()).filter(Boolean),
       service_zips: splitList($('pZips').value),
       is_available: $('pAvailable').checked,
+      share_phone: $('pShare').checked,
     };
     showProfile(await authed('/pro/profile', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(body) }));
-    msg('Profile saved.');
+    msg(_('Profile saved.'));
   } catch (e) {
-    msg(e.status === 422 ? 'Please check your entries: ZIP codes need 5 digits and the name at least 2 characters.' : e.message);
+    msg(e.status === 422 ? _('Please check your entries: ZIP codes need 5 digits and the name at least 2 characters.') : e.message);
   }
   $('pSave').disabled = false;
 }
@@ -377,9 +389,9 @@ async function sendCode() {
   try {
     const r = await authed('/pro/profile/phone', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ phone: $('pNewPhone').value }) });
     $('pCodeRow').classList.remove('hide');
-    $('pCodeHint').textContent = 'We texted a code to ' + r.sent_to + ' (valid ' + r.expires_in_minutes + ' minutes).' +
-      (r.dev_code ? ' Local testing code: ' + r.dev_code : '');
-  } catch (e) { msg(e.status === 422 ? 'Enter the number like +16195550199.' : e.message); }
+    $('pCodeHint').textContent = _('We texted a code to {to} (valid {mins} minutes).', { to: r.sent_to, mins: r.expires_in_minutes }) +
+      (r.dev_code ? _(' Local testing code: {code}', { code: r.dev_code }) : '');
+  } catch (e) { msg(e.status === 422 ? _('Enter the number like +16195550199.') : e.message); }
   $('pSendCode').disabled = false;
 }
 async function verifyCode() {
@@ -387,7 +399,7 @@ async function verifyCode() {
   try {
     showProfile(await authed('/pro/profile/phone/verify', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ code: $('pCode').value }) }));
     $('pCodeRow').classList.add('hide'); $('pCodeHint').textContent = ''; $('pNewPhone').value = ''; $('pCode').value = '';
-    msg('Phone number confirmed.');
+    msg(_('Phone number confirmed.'));
   } catch (e) { msg(e.message); }
   $('pVerify').disabled = false;
 }
@@ -396,8 +408,9 @@ async function verifyCode() {
 async function showApp() {
   try {
     const me = await authed('/me');
-    if (me.role !== 'HANDYMAN') { signedOut('This page is for handyman accounts.'); return; }
+    if (me.role !== 'HANDYMAN') { signedOut(_('This page is for handyman accounts.')); return; }
     $('who').textContent = me.display_name || me.email;
+    I18N.adopt(me.language);   // the language saved on the account wins over the browser's
     $('signedOut').classList.add('hide'); $('signedIn').classList.remove('hide');
     if (msgs) msgs.stop();
     msgs = AlcheMessages.mount($('msgsRoot'), { authed, onUnread: n => {
@@ -408,8 +421,21 @@ async function showApp() {
     clearInterval(jobsTimer);
     jobsTimer = setInterval(loadJobs, 5000);
     showTab('jobs');
-  } catch (e) { signedOut(e.status === 401 ? 'Please log in again.' : e.message); }
+  } catch (e) { signedOut(e.status === 401 ? _('Please log in again.') : e.message); }
 }
+
+// Switching language: save it on the account and redraw what the script built.
+I18N.persist = async l => {
+  if (!store.get('access')) return;
+  try { await authed('/me/language', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ language: l }) }); }
+  catch (e) { /* the choice still applies in this browser */ }
+};
+I18N.onChange(() => {
+  if (!$('signedIn').classList.contains('hide')) {
+    loadJobs(); loadAi(); loadProfile();
+    if (msgs) msgs.relabel();
+  }
+});
 
 (function init() {
   if (inviteToken()) { signedOut(); return; }

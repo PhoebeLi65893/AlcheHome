@@ -91,10 +91,70 @@ EMERGENCY_REPLIES = {
 }
 
 
+# Chinese: the same categories, so a Chinese-speaking customer gets the same protection.
+_ZH = "[^。！？!?]"
+_PATTERNS_ZH: dict[str, list[str]] = {
+    "gas": [
+        rf"(?:煤气|燃气|天然气|瓦斯){_ZH}{{0,10}}(?:泄漏|泄露|漏气|味|臭)",
+        rf"闻到{_ZH}{{0,6}}(?:煤气|燃气|天然气|瓦斯)",
+        r"漏气|煤气味",
+    ],
+    "carbon_monoxide": [r"一氧化碳"],
+    "fire": [r"着火|起火|失火|火灾|冒烟|冒火|烧起来|明火"],
+    "electrical": [
+        r"触电|电击|漏电|被电到",
+        rf"(?:插座|电线|线路|电路|配电箱|电箱|开关){_ZH}{{0,10}}(?:火花|打火|冒烟|烧焦|焦味|糊味)",
+    ],
+    "flood_electric": [
+        rf"(?:漏水|进水|积水|水){_ZH}{{0,20}}(?:插座|配电箱|电箱|电表|开关|灯)",
+        rf"(?:插座|配电箱|电箱|开关){_ZH}{{0,20}}(?:进水|漏水|有水|泡水|湿)",
+    ],
+    "structural": [rf"(?:天花板|屋顶|房顶|地板|墙){_ZH}{{0,10}}(?:坍塌|倒塌|塌|垮)"],
+}
+_COMPILED_ZH = {k: [re.compile(p) for p in v] for k, v in _PATTERNS_ZH.items()}
+
+EMERGENCY_REPLIES_ZH = {
+    "gas": (
+        "这可能是煤气泄漏，非常危险。请立即行动：1）马上带着屋内所有人离开建筑。2）在走到室外之前，"
+        "不要开关灯、使用电器、打火机或手机。3）到室外后拨打 911，并联系燃气公司的紧急电话。"
+        "在救援人员确认安全之前不要返回。"
+    ),
+    "carbon_monoxide": (
+        "一氧化碳报警很严重。请立即带所有人（包括宠物）到室外呼吸新鲜空气并拨打 911。"
+        "即使警报停止，也要等救援人员确认安全后再返回。"
+    ),
+    "fire": (
+        "起火或冒烟属于紧急情况。请立刻让所有人撤离，离开时尽量关上身后的门，并在室外拨打 911。"
+        "不要试图扑灭蔓延的火势，也不要为了拿东西返回室内。"
+    ),
+    "electrical": (
+        "电气设备冒火花、有焦糊味或触电可能引发火灾。请远离且不要触碰。如果看到烟或火焰，"
+        "或有人触电，请立即离开并拨打 911。切勿用水扑灭电气火灾。如果总开关干燥且容易够到，"
+        "可以关闭总开关；否则请保持距离。"
+    ),
+    "flood_electric": (
+        "插座、配电箱或灯具附近有水会带来触电和火灾风险。不要触碰，也不要踩进它们附近的积水。"
+        "让所有人远离；如果无法安全做到，请离开并拨打 911。如果总开关干燥且容易够到，可以关闭它。"
+    ),
+    "structural": (
+        "天花板、地板或墙体坍塌非常危险。请让所有人远离该区域，尽可能到室外，然后拨打 911。"
+        "在检查确认安全之前不要靠近。"
+    ),
+}
+_TAIL_ZH = "我是自动助手，无法替你呼叫紧急服务。等大家都安全之后，我很乐意帮你安排维修。"
+
+
+def emergency_reply(category: str, lang: str = "en") -> str:
+    if lang == "zh":
+        return EMERGENCY_REPLIES_ZH[category] + " " + _TAIL_ZH
+    return EMERGENCY_REPLIES[category]
+
+
 def check_emergency(text: str) -> str | None:
     """Return the emergency category for a user message, or None."""
     normalized = " ".join(text.split())
-    for category, patterns in _COMPILED.items():
-        if any(p.search(normalized) for p in patterns):
-            return category
+    for compiled in (_COMPILED, _COMPILED_ZH):
+        for category, patterns in compiled.items():
+            if any(p.search(normalized) for p in patterns):
+                return category
     return None

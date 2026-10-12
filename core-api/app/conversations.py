@@ -94,6 +94,8 @@ def store_message(
     ticket: TicketCard | None = None,
     provider_message_id: str | None = None,
     relay_ticket_id=None,
+    lang: str | None = None,
+    translations: dict | None = None,
 ) -> MessageOut | None:
     """Insert a message. Returns None if `provider_message_id` was already stored (a retry)."""
     # clock_timestamp() (not now()) so the user message and bot reply get different
@@ -101,8 +103,9 @@ def store_message(
     row = conn.execute(
         text(
             "INSERT INTO messages (conversation_id, sender, body, flag, media_refs, ticket_id, "
-            "provider_message_id, relay_ticket_id, created_at) "
-            "VALUES (:c, :s, :b, :f, CAST(:m AS jsonb), :t, :p, :r, clock_timestamp()) "
+            "provider_message_id, relay_ticket_id, lang, translations, created_at) "
+            "VALUES (:c, :s, :b, :f, CAST(:m AS jsonb), :t, :p, :r, :lang, "
+            "CAST(:tr AS jsonb), clock_timestamp()) "
             "ON CONFLICT (provider_message_id) DO NOTHING "
             "RETURNING id, sender, body, flag, media_refs, created_at"
         ),
@@ -115,6 +118,8 @@ def store_message(
             "t": ticket.id if ticket else None,
             "p": provider_message_id,
             "r": relay_ticket_id,
+            "lang": lang,
+            "tr": json.dumps(translations or {}),
         },
     ).first()
     return _message(row, ticket) if row else None
@@ -181,6 +186,10 @@ def run_turn(
         requested = conn.execute(
             text("SELECT ticket_requested FROM conversations WHERE id = :c"), {"c": cid}
         ).scalar_one()
+        prefs = conn.execute(
+            text("SELECT language, home_zip FROM users WHERE id = :u"), {"u": user_id}
+        ).one()
+        lang, home_zip = prefs.language, prefs.home_zip
         mine = store_message(
             conn,
             cid,
@@ -212,13 +221,18 @@ def run_turn(
             existing_ticket=existing_ticket,
             channel=channel,
             want_ticket=requested,
+            lang=lang,
+            home_zip=home_zip,
         )
     # Step 3: run the ticket tool if the agent asked for it, then save the reply.
     with shared_engine().begin() as conn:
         text_out, ticket = reply.text, None
         if reply.ticket_request is not None:
+            args = dict(reply.ticket_request)
+            if home_zip and not str(args.get("location_zip") or "").strip():
+                args["location_zip"] = home_zip  # the customer's saved ZIP, never invented
             outcome = create_from_tool(
-                conn, user_id, cid, reply.ticket_request, actor=f"agent:{reply.source}"
+                conn, user_id, cid, args, actor=f"agent:{reply.source}", lang=lang
             )
             ticket = outcome.ticket
             text_out = f"{reply.text}\n\n{outcome.message}" if reply.text else outcome.message

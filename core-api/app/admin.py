@@ -7,11 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from app import i18n
 from app.auth import current_user
 from app.db import shared_engine
 from app.dispatch import Outgoing, deliver, notify_customer, start_dispatch
 from app.matching import Candidate, rank
-from app.tickets.service import LABELS, TicketCard, card_from_row
+from app.tickets.service import TicketCard, card_from_row
 from app.tickets.state import InvalidTransition, transition
 
 
@@ -149,7 +150,7 @@ def assign(ticket_id: uuid.UUID, body: AssignIn, admin: Admin):
             )
         h = conn.execute(
             text(
-                "SELECT h.display_name, u.phone_e164, u.sms_opted_out FROM handymen h "
+                "SELECT h.display_name, u.phone_e164, u.sms_opted_out, u.language FROM handymen h "
                 "JOIN users u ON u.id = h.user_id WHERE h.user_id = :h"
             ),
             {"h": body.handyman_id},
@@ -183,18 +184,18 @@ def assign(ticket_id: uuid.UUID, body: AssignIn, admin: Admin):
             text("UPDATE tickets SET assigned_handyman_id = :h WHERE id = :t"),
             {"h": body.handyman_id, "t": ticket_id},
         )
-        out += notify_customer(
-            conn,
-            t,
-            f"Good news: {h.display_name} has been assigned to repair request "
-            f"#{t.ticket_number} ({LABELS[t.category]}). You can message them from your request.",
-        )
+        out += notify_customer(conn, t, "customer_assigned", name=h.display_name)
         if h.phone_e164 and not h.sms_opted_out:
             out.append(
                 Outgoing(
                     h.phone_e164,
-                    f"Alche Home: you've been assigned job #{t.ticket_number} "
-                    f"({LABELS[t.category]}, ZIP {t.location_zip}). We'll send the details next.",
+                    i18n.t(
+                        h.language,
+                        "handyman_assigned_sms",
+                        n=t.ticket_number,
+                        cat=i18n.category(h.language, t.category),
+                        zip=t.location_zip,
+                    ),
                 )
             )
         row = conn.execute(

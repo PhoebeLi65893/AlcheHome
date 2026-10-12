@@ -3,19 +3,15 @@ from dataclasses import dataclass
 
 import httpx
 
-from app import bot
+from app import bot, i18n
 from app.agent import gemini
 from app.agent.context import build_contents
-from app.agent.safety import EMERGENCY_REPLIES, check_emergency
+from app.agent.safety import check_emergency, emergency_reply
 from app.config import get_settings
 from app.tickets.schema import TOOL_DECLARATION, TOOL_NAME
 
 logger = logging.getLogger(__name__)
 
-FALLBACK = (
-    "Sorry, I'm having trouble right now. If this is an emergency (gas smell, fire, sparking "
-    "wires), leave the area and call 911. Otherwise please try again in a moment."
-)
 TICKET_EXISTS_NOTE = (
     "A repair request (#{number}) was already created in this conversation, so you cannot "
     "create another one here. Answer follow-up questions about it. If the customer describes a "
@@ -28,11 +24,6 @@ SMS_NOTE = (
     "urgent it is and their 5-digit ZIP code, give a one-sentence summary and ask whether they "
     "would like you to create a repair request. Ask them to reply OK (words like YES, STOP and "
     "HELP are reserved by the SMS provider). Only after they agree, call create_repair_ticket."
-)
-NO_AI_REQUEST_REPLY = (
-    "Creating a request from chat needs the AI assistant, which is not configured. "
-    "For local testing type /ticket CATEGORY URGENCY ZIP description, for example: "
-    "/ticket plumbing same_day 92101 Kitchen sink leaking under the cabinet"
 )
 WEB_CHAT_NOTE = (
     "The customer is chatting in the app. Focus on understanding the problem and giving "
@@ -71,6 +62,8 @@ def respond(
     existing_ticket: int | None = None,
     channel: str = "WEB",
     want_ticket: bool = False,
+    lang: str = "en",
+    home_zip: str | None = None,
 ) -> Reply:
     """Produce the bot reply.
 
@@ -82,14 +75,14 @@ def respond(
     """
     category = check_emergency(latest_text)
     if category:
-        return Reply(EMERGENCY_REPLIES[category], emergency=True, source="safety")
+        return Reply(emergency_reply(category, lang), emergency=True, source="safety")
     s = get_settings()
     if not s.gemini_api_key:
         if s.app_env == "local" and latest_text.lower().startswith(DEV_COMMAND):
             return Reply("", source="dev", ticket_request=_dev_ticket(latest_text))
         if want_ticket:
-            return Reply(NO_AI_REQUEST_REPLY, source="echo")
-        return Reply(bot.reply_to(latest_text, photos=len(images)), source="echo")
+            return Reply(i18n.t(lang, "no_ai_request"), source="echo")
+        return Reply(bot.reply_to(latest_text, photos=len(images), lang=lang), source="echo")
     may_create = not existing_ticket and (channel == "SMS" or want_ticket)
     tools = [TOOL_DECLARATION] if may_create else None
     notes = []
@@ -101,18 +94,27 @@ def respond(
         notes.append(WANT_TICKET_NOTE)
     elif not existing_ticket:
         notes.append(WEB_CHAT_NOTE)
+    if home_zip:
+        notes.append(
+            f"The customer's saved home ZIP code is {home_zip}. Use it as the repair location "
+            "unless they say the repair is somewhere else, and do not ask for it."
+        )
+    if i18n.t(lang, "note_lang"):
+        notes.append(i18n.t(lang, "note_lang"))
     note = " ".join(notes)
     try:
         result = gemini.generate(build_contents(history, images), tools=tools, note=note)
     except gemini.GeminiError as e:
         logger.warning("Gemini call failed: %s", e)
-        return Reply(FALLBACK, source="fallback")
+        return Reply(i18n.t(lang, "fallback"), source="fallback")
     except httpx.HTTPError as e:
         logger.warning("Gemini call failed: %s", type(e).__name__)
-        return Reply(FALLBACK, source="fallback")
+        return Reply(i18n.t(lang, "fallback"), source="fallback")
     call = result.function_call
     if call and call.name == TOOL_NAME and may_create:
         return Reply(result.text, ticket_request=call.args)
     if call:
         logger.warning("Gemini called an unknown function: %s", call.name[:50])
-    return Reply(result.text or FALLBACK, source="gemini" if result.text else "fallback")
+    return Reply(
+        result.text or i18n.t(lang, "fallback"), source="gemini" if result.text else "fallback"
+    )

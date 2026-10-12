@@ -31,6 +31,7 @@ class TicketDetail(TicketCard):
     max_offers: int = MAX_ATTEMPTS
     offer_expires_at: datetime | None = None  # when the current offer times out
     handyman_name: str | None = None  # once assigned
+    handyman_phone: str | None = None  # only if the handyman shares it, while the job is open
     media_ids: list[str]
     events: list[TicketEvent]
 
@@ -74,7 +75,11 @@ def ticket_detail(ticket_id: uuid.UUID, user: User):
                 "(SELECT min(expires_at) FROM dispatch_offers "
                 " WHERE ticket_id = :t AND status = 'SENT') AS expires, "
                 "(SELECT h.display_name FROM tickets t JOIN handymen h "
-                " ON h.user_id = t.assigned_handyman_id WHERE t.id = :t) AS name"
+                " ON h.user_id = t.assigned_handyman_id WHERE t.id = :t) AS name, "
+                "(SELECT u.phone_e164 FROM tickets t JOIN handymen h "
+                " ON h.user_id = t.assigned_handyman_id JOIN users u ON u.id = h.user_id "
+                " WHERE t.id = :t AND h.share_phone AND t.status IN ('ASSIGNED','IN_PROGRESS')) "
+                " AS phone"
             ),
             {"t": ticket_id},
         ).one()
@@ -83,6 +88,7 @@ def ticket_detail(ticket_id: uuid.UUID, user: User):
         offers_sent=progress.sent,
         offer_expires_at=progress.expires,
         handyman_name=progress.name,
+        handyman_phone=progress.phone,
         created_at=created,
         media_ids=[str(m) for m in media],
         events=[TicketEvent(**e._mapping) for e in events],

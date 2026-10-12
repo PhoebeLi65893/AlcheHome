@@ -2,10 +2,12 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from sqlalchemy import text
 
 from app.admin import router as admin_router
 from app.auth import current_user
@@ -13,10 +15,12 @@ from app.auth import router as auth_router
 from app.channels.sms import router as sms_router
 from app.chat import router as chat_router
 from app.config import get_settings
+from app.db import shared_engine
 from app.dispatch import expire_overdue, remind_unanswered
 from app.media import router as media_router
 from app.pro import router as pro_router
 from app.profile import admin_router as handymen_admin_router
+from app.profile import customer_router as customer_profile_router
 from app.profile import router as profile_router
 from app.threads import router as threads_router
 from app.tickets.router import router as tickets_router
@@ -53,7 +57,7 @@ async def lifespan(_app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="Alche Home Core API", version="0.14.0", lifespan=lifespan)
+app = FastAPI(title="Alche Home Core API", version="0.16.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -69,6 +73,7 @@ app.include_router(sms_router)
 app.include_router(admin_router)
 app.include_router(pro_router)
 app.include_router(profile_router)
+app.include_router(customer_profile_router)
 app.include_router(handymen_admin_router)
 app.include_router(threads_router)
 
@@ -86,3 +91,18 @@ def health() -> dict:
 @app.get("/me")
 def me(user: Annotated[dict, Depends(current_user)]) -> dict:
     return {**user, "id": str(user["id"])}
+
+
+class LanguageIn(BaseModel):
+    language: Literal["en", "zh"]
+
+
+@app.put("/me/language")
+def set_language(body: LanguageIn, user: Annotated[dict, Depends(current_user)]) -> dict:
+    """The language of this account's screens, texts and AI replies (English or Chinese)."""
+    with shared_engine().begin() as conn:
+        conn.execute(
+            text("UPDATE users SET language = :l WHERE id = :u"),
+            {"l": body.language, "u": user["id"]},
+        )
+    return {"language": body.language}

@@ -84,6 +84,7 @@ th{color:#64748b;font-weight:600}
 </section>
 </main>
 
+<script src="i18n.js?v=16"></script>
 <script>
 // Dev-only: tokens live in sessionStorage, like the customer page.
 const API = window.API_BASE || 'http://localhost:8000';
@@ -100,7 +101,7 @@ async function api(path, opts = {}) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const d = body && body.detail;
-    throw Object.assign(new Error(typeof d === 'string' ? d : 'Request failed'), { status: res.status });
+    throw Object.assign(new Error(typeof d === 'string' ? I18N.err(d) : _('Request failed')), { status: res.status });
   }
   return body;
 }
@@ -139,7 +140,7 @@ async function signIn() {
     store.set('access', t.access_token); store.set('refresh', t.refresh_token);
     $('password').value = '';
     await showPanel();
-  } catch (e) { msg(e.message === 'Request failed' ? 'Could not log in.' : e.message); }
+  } catch (e) { msg(e.status === 401 ? _('Could not log in.') : e.message); }
 }
 
 function signOut() {
@@ -150,8 +151,9 @@ function signOut() {
 
 async function showPanel() {
   const me = await authed('/me');
-  if (me.role !== 'ADMIN') { store.clear(); msg('This account is not an admin.'); return; }
+  if (me.role !== 'ADMIN') { store.clear(); msg(_('This account is not an admin.')); return; }
   $('who').textContent = me.email || me.id;
+  I18N.adopt(me.language);
   $('login').classList.add('hide'); $('panel').classList.remove('hide');
   await load();
 }
@@ -171,30 +173,32 @@ async function loadHandymen() {
   try {
     const list = await authed('/admin/handymen');
     $('handymenList').replaceChildren(...(list.length ? list.map(handymanRow)
-      : [el('p', { className: 'empty', textContent: 'No handymen yet.' })]));
+      : [el('p', { className: 'empty', textContent: _('No handymen yet.') })]));
   } catch (e) { msg(e.message); }
 }
 
 function handymanRow(h) {
   const actions = el('div', { className: 'buttons' });
   if (h.status === 'PENDING') {
-    const ok = el('button', { textContent: 'Approve', onclick: () => act(h, 'approve') });
+    const ok = el('button', { textContent: _('Approve'), onclick: () => act(h, 'approve') });
     ok.disabled = !h.complete;
-    ok.title = h.complete ? '' : 'The profile needs expertise and a ZIP code first';
+    ok.title = h.complete ? '' : _('The profile needs expertise and a ZIP code first');
     actions.append(ok);
   } else {
-    actions.append(el('button', { className: 'alt', textContent: 'Suspend', onclick: () => act(h, 'suspend') }));
+    actions.append(el('button', { className: 'alt', textContent: _('Suspend'), onclick: () => act(h, 'suspend') }));
   }
-  actions.append(el('button', { className: 'alt', textContent: 'New invite link', onclick: () => invite(h) }));
+  actions.append(el('button', { className: 'alt', textContent: _('New invite link'), onclick: () => invite(h) }));
   return el('div', { className: 'ticket ' + (h.status === 'APPROVED' ? 'MATCHING' : '') },
     el('div', { className: 'head' },
       el('span', { textContent: h.display_name }),
-      el('span', { className: 'pill ' + h.status, textContent: h.status })),
+      el('span', { className: 'pill ' + h.status, textContent: _(h.status) })),
     el('div', { className: 'meta', textContent:
-      [h.email || 'no email', h.phone || 'no phone', h.has_password ? 'has password' : 'invite not used yet',
-       h.is_available ? 'available' : 'on break'].join(' · ') }),
+      [h.email || _('no email'), h.phone || _('no phone'), h.has_password ? _('has password') : _('invite not used yet'),
+       h.is_available ? _('available') : _('on break')].join(' · ') }),
     el('p', { className: 'summary', textContent:
-      'Expertise: ' + (h.skills.join(', ') || 'none yet') + ' · ZIPs: ' + (h.service_zips.join(', ') || 'none yet') }),
+      _('Expertise: {skills} · ZIPs: {zips}', {
+        skills: h.skills.map(s => _(s)).join(', ') || _('none yet'),
+        zips: h.service_zips.join(', ') || _('none yet') }) }),
     actions);
 }
 
@@ -207,7 +211,7 @@ async function act(h, what) {
 
 function showInvite(url) {
   const p = $('inviteOut');
-  p.textContent = 'Send this link to the handyman (works once, valid 7 days): ' + url;
+  p.textContent = _('Send this link to the handyman (works once, valid 7 days): {url}', { url });
   p.classList.remove('hide');
 }
 
@@ -229,7 +233,7 @@ async function addHandyman() {
     showInvite(r.invite_url);
     $('newEmail').value = ''; $('newName').value = '';
     await loadHandymen();
-  } catch (e) { msg(e.status === 422 ? 'Enter a valid email and a name of at least 2 characters.' : e.message); }
+  } catch (e) { msg(e.status === 422 ? _('Enter a valid email and a name of at least 2 characters.') : e.message); }
 }
 
 async function load() {
@@ -238,7 +242,7 @@ async function load() {
   try {
     const list = await authed('/admin/tickets?status=' + $('status').value);
     box.replaceChildren(...(list.length ? list.map(ticketView)
-      : [el('p', { className: 'empty', textContent: 'No tickets here. Nice.' })]));
+      : [el('p', { className: 'empty', textContent: _('No tickets here. Nice.') })]));
   } catch (e) { msg(e.message); }
 }
 
@@ -246,15 +250,15 @@ function ticketView(t) {
   const detail = el('div');
   const card = el('div', { className: 'ticket ' + t.status },
     el('div', { className: 'head' },
-      el('span', { textContent: `#${t.number} · ${t.category} · ${t.urgency}` }),
-      el('span', { textContent: `ZIP ${t.location_zip}` })),
+      el('span', { textContent: `#${t.number} · ${_(t.category)} · ${_(t.urgency)}` }),
+      el('span', { textContent: `${_('ZIP')} ${t.location_zip}` })),
     el('div', { className: 'meta', textContent:
-      `${t.status} · waiting ${t.waiting_minutes} min · ${t.offers} offer(s) sent` }),
+      _('{status} · waiting {mins} min · {offers} offer(s) sent', { status: _(t.status), mins: t.waiting_minutes, offers: t.offers }) }),
     el('p', { className: 'summary', textContent: t.issue_summary }),
     el('div', { className: 'buttons' },
-      el('button', { textContent: 'Choose handyman', onclick: () => chooser(t, detail) }),
+      el('button', { textContent: _('Choose handyman'), onclick: () => chooser(t, detail) }),
       t.status === 'UNMATCHED'
-        ? el('button', { className: 'alt', textContent: 'Retry automatic dispatch',
+        ? el('button', { className: 'alt', textContent: _('Retry automatic dispatch'),
             onclick: () => retry(t) }) : ''),
     detail);
   return card;
@@ -263,32 +267,32 @@ function ticketView(t) {
 async function chooser(t, box) {
   try {
     const list = await authed(`/admin/tickets/${t.id}/handymen`);
-    if (!list.length) { box.replaceChildren(el('p', { className: 'dim', textContent: 'Nobody has this skill.' })); return; }
+    if (!list.length) { box.replaceChildren(el('p', { className: 'dim', textContent: _('Nobody has this skill.') })); return; }
     const head = el('tr', {}, ...['Handyman', 'Score', 'Covers ZIP', 'Available', 'Rating', 'Response', 'Earlier offer', '']
-      .map(h => el('th', { textContent: h })));
+      .map(h => el('th', { textContent: h ? _(h) : h })));
     const rows = list.map(h => el('tr', {},
       el('td', { textContent: h.display_name }),
       el('td', h.score === null ? { className: 'dim', textContent: 'n/a' } : { className: 'ok', textContent: h.score.toFixed(3) }),
-      el('td', { textContent: h.covers_zip ? 'yes' : 'no' }),
-      el('td', { textContent: h.is_available ? 'yes' : 'no' }),
+      el('td', { textContent: h.covers_zip ? _('yes') : _('no') }),
+      el('td', { textContent: h.is_available ? _('yes') : _('no') }),
       el('td', { textContent: h.rating_avg.toFixed(1) }),
       el('td', { textContent: Math.round(h.response_rate * 100) + '%' }),
-      el('td', { textContent: h.already_offered || '' }),
-      el('td', {}, el('button', { textContent: 'Assign', onclick: () => assign(t, h) }))));
+      el('td', { textContent: h.already_offered ? _(h.already_offered) : '' }),
+      el('td', {}, el('button', { textContent: _('Assign'), onclick: () => assign(t, h) }))));
     box.replaceChildren(el('table', {}, el('thead', {}, head), el('tbody', {}, rows)));
   } catch (e) { msg(e.message); }
 }
 
 async function assign(t, h) {
-  const warn = h.score === null ? ' They do not cover this ZIP or are unavailable.' : '';
-  if (!confirm(`Assign ${h.display_name} to #${t.number}?${warn}`)) return;
+  const warn = h.score === null ? _(' They do not cover this ZIP or are unavailable.') : '';
+  if (!confirm(_('Assign {name} to #{n}?{warn}', { name: h.display_name, n: t.number, warn }))) return;
   try {
     await authed(`/admin/tickets/${t.id}/assign`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ handyman_id: h.handyman_id })
     });
     await load();
-    msg(`#${t.number} assigned to ${h.display_name}.`);
+    msg(_('#{n} assigned to {name}.', { n: t.number, name: h.display_name }));
   } catch (e) { msg(e.message); }
 }
 
@@ -296,9 +300,20 @@ async function retry(t) {
   try {
     const r = await authed(`/admin/tickets/${t.id}/retry`, { method: 'POST' });
     await load();
-    msg(r.started ? `Dispatch restarted for #${t.number}.` : 'Ticket is no longer UNMATCHED.');
+    msg(r.started ? _('Dispatch restarted for #{n}.', { n: t.number }) : _('Ticket is no longer UNMATCHED.'));
   } catch (e) { msg(e.message); }
 }
+
+// Switching language: save it on the account and redraw what the script built.
+I18N.persist = async l => {
+  if (!store.get('access')) return;
+  try { await authed('/me/language', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: l }) }); }
+  catch (e) { /* the choice still applies in this browser */ }
+};
+I18N.onChange(() => {
+  if ($('panel').classList.contains('hide')) return;
+  if ($('handymen').classList.contains('hide')) load(); else loadHandymen();
+});
 
 (function init() {
   if (store.get('access')) showPanel().catch(() => signOut());

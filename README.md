@@ -220,3 +220,22 @@ specialties, ZIP codes (the first is the home ZIP) and availability. A phone num
 code (shown in the response when `APP_ENV=local`). New profiles are PENDING until an admin approves them; later edits
 apply immediately. API: `GET/PUT /pro/profile`, `POST /pro/profile/phone`, `POST /pro/profile/phone/verify`,
 `GET/POST /admin/handymen`, `POST /admin/handymen/{id}/approve|suspend|invite`.
+
+## T13-2 demo: English and Chinese
+
+Every page (`/`, `/handyman.html`, `/admin.html`) has a language button (English / 中文) in the top right. The choice
+is kept in the browser and saved on the account (`PUT /me/language`), and drives the screens, SMS texts, AI
+replies and the language of notices. Customer and handyman can use different languages: messages between them are
+translated by Gemini for the reader, with **Show original**; both versions are stored (`messages.lang`,
+`messages.translations`). If translation fails the original is delivered. SMS customers can text `中文` or `ENGLISH`
+to switch; handymen can answer offers with `接单 1042` or `拒绝 1042`. The emergency safety rules also recognise
+Chinese.
+
+## T13-2-2 demo: customer profile and the handyman's phone number
+
+Customers have a **My profile** tab: name, home ZIP (used for new requests, so the assistant does not ask for it)
+and a phone number confirmed by SMS code. A handyman can tick "Show my phone number to the customer once I accept
+their job" in their profile (off by default). When they do, the job's customer sees the number on the ticket card and
+in the conversation, and calls from their own phone. There is no call button or call bridge in this version.
+API: `GET/PUT /me/profile`, `POST /me/profile/phone`, `POST /me/profile/phone/verify`, and `handyman_phone` on
+`GET /tickets/{id}` / `counterpart_phone` on `GET /threads/{id}/messages` (customer side only).

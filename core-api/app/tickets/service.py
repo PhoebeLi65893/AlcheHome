@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from app.tickets.schema import TicketDraft, validate_draft
+from app import i18n
+from app.tickets.schema import FIELD_NAMES, TicketDraft, validate_draft
 from app.tickets.state import record_event, transition
 
 logger = logging.getLogger(__name__)
@@ -68,12 +69,21 @@ class ToolOutcome:
     ticket: TicketCard | None = None
 
 
-def _confirmation(card: TicketCard) -> str:
+def _confirmation(card: TicketCard, lang: str = "en") -> str:
     when = {
         "EMERGENCY": "as an emergency",
         "SAME_DAY": "for today",
         "FLEXIBLE": "with flexible timing",
     }[card.urgency]
+    if lang == "zh":
+        return i18n.t(
+            lang,
+            "confirmation",
+            n=card.number,
+            cat=i18n.category(lang, card.category),
+            when=i18n.when(lang, card.urgency),
+            zip=card.location_zip,
+        )
     return (
         f"I've created repair request #{card.number} ({LABELS[card.category]}, {when}, "
         f"ZIP {card.location_zip}). Next we'll look for an available handyman near you, and "
@@ -81,7 +91,12 @@ def _confirmation(card: TicketCard) -> str:
     )
 
 
-def create_from_tool(conn, customer_id, conversation_id, args: dict, actor: str) -> ToolOutcome:
+_FIELD_KEYS = {v: k for k, v in FIELD_NAMES.items()}
+
+
+def create_from_tool(
+    conn, customer_id, conversation_id, args: dict, actor: str, lang: str = "en"
+) -> ToolOutcome:
     """Run the create_repair_ticket tool: validate, create DRAFT, move to OPEN, link photos."""
     existing = conn.execute(
         text(
@@ -92,20 +107,18 @@ def create_from_tool(conn, customer_id, conversation_id, args: dict, actor: str)
     ).scalar()
     if existing:
         card = get_card(conn, existing)
-        return ToolOutcome(
-            f"This conversation already has repair request #{card.number}. To report a "
-            "different problem, start a new request.",
-            card,
-        )
+        return ToolOutcome(i18n.t(lang, "already_has", n=card.number), card)
     draft, problems = validate_draft(args)
     if draft is None:
         # Log field names only: the arguments can contain the customer's own words.
         logger.info("create_repair_ticket rejected; problems with: %s", ", ".join(problems))
-        return ToolOutcome(
-            "Before I can create the request I still need " + " and ".join(problems) + "."
-        )
+        names = [
+            i18n.t(lang, "f_" + _FIELD_KEYS.get(p, p)) if p in _FIELD_KEYS else p for p in problems
+        ]
+        end = "。" if lang == "zh" else "."
+        return ToolOutcome(i18n.t(lang, "need_details") + i18n.t(lang, "and").join(names) + end)
     card = _create(conn, customer_id, conversation_id, draft, actor)
-    return ToolOutcome(_confirmation(card), card)
+    return ToolOutcome(_confirmation(card, lang), card)
 
 
 def _create(conn, customer_id, conversation_id, draft: TicketDraft, actor: str) -> TicketCard:

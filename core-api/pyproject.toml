@@ -5,6 +5,9 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+"app/i18n.py" = ["E501"]  # message tables
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

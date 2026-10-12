@@ -16,7 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
+from app import i18n
 from app.admin import require_admin
+from app.auth import current_user
 from app.config import get_settings
 from app.db import shared_engine
 from app.dispatch import Outgoing, deliver
@@ -82,6 +84,7 @@ def _code_hash(user_id, code: str) -> str:
 
 # ---------- models ----------
 class ProfileOut(BaseModel):
+    share_phone: bool  # show my number to the customer of a job I have accepted
     display_name: str
     email: str | None
     phone: str | None  # masked
@@ -101,6 +104,7 @@ class ProfileIn(BaseModel):
     specialties: list[str] = Field(default_factory=list, max_length=MAX_SPECIALTIES)
     service_zips: list[str] = Field(default_factory=list, max_length=MAX_ZIPS)
     is_available: bool = True
+    share_phone: bool = False
 
     @field_validator("display_name")
     @classmethod
@@ -175,7 +179,7 @@ def _load(conn, user) -> ProfileOut:
     h = conn.execute(
         text(
             "SELECT h.display_name, h.specialties, h.service_zips, h.is_available, "
-            "h.verified_at, u.email, u.phone_e164, "
+            "h.share_phone, h.verified_at, u.email, u.phone_e164, "
             "EXISTS (SELECT 1 FROM phone_verifications p WHERE p.user_id = u.id "
             " AND p.expires_at > now()) AS phone_pending "
             "FROM handymen h JOIN users u ON u.id = h.user_id WHERE h.user_id = :u"
@@ -190,6 +194,7 @@ def _load(conn, user) -> ProfileOut:
         )
     ]
     return ProfileOut(
+        share_phone=h.share_phone,
         display_name=h.display_name,
         email=h.email,
         phone=mask_phone(h.phone_e164),
@@ -219,13 +224,14 @@ def save_profile(body: ProfileIn, user: Pro):
         conn.execute(
             text(
                 "UPDATE handymen SET display_name = :n, specialties = :sp, service_zips = :z, "
-                "is_available = :a WHERE user_id = :u"
+                "is_available = :a, share_phone = :sh WHERE user_id = :u"
             ),
             {
                 "n": body.display_name,
                 "sp": body.specialties,
                 "z": body.service_zips,
                 "a": body.is_available,
+                "sh": body.share_phone,
                 "u": user["id"],
             },
         )
@@ -238,8 +244,7 @@ def save_profile(body: ProfileIn, user: Pro):
         return _load(conn, user)
 
 
-@router.post("/phone", response_model=PhoneStarted)
-def start_phone_change(body: PhoneIn, user: Pro):
+def _start_phone(user, body: PhoneIn) -> PhoneStarted:
     phone = normalize_phone(body.phone)
     if phone is None:
         raise HTTPException(
@@ -272,7 +277,7 @@ def start_phone_change(body: PhoneIn, user: Pro):
             ),
             {"u": user["id"], "p": phone, "h": _code_hash(user["id"], code), "m": CODE_TTL_MINUTES},
         )
-    deliver([Outgoing(phone, f"Your Alche Home verification code is {code}")])
+    deliver([Outgoing(phone, i18n.t(user.get("language"), "code_sms", code=code))])
     return PhoneStarted(
         sent_to=mask_phone(phone) or "",
         expires_in_minutes=CODE_TTL_MINUTES,
@@ -280,8 +285,7 @@ def start_phone_change(body: PhoneIn, user: Pro):
     )
 
 
-@router.post("/phone/verify", response_model=ProfileOut)
-def verify_phone(body: CodeIn, user: Pro):
+def _verify_phone(user, body: CodeIn) -> None:
     wrong = False
     with shared_engine().begin() as conn:
         row = conn.execute(
@@ -305,13 +309,17 @@ def verify_phone(body: CodeIn, user: Pro):
             if taken:
                 raise HTTPException(409, "That phone number is already used by another account")
             conn.execute(
-                text("UPDATE users SET phone_e164 = :p, preferred_channel = 'SMS' WHERE id = :u"),
+                text(
+                    "UPDATE users SET phone_e164 = :p, preferred_channel = "
+                    "CASE WHEN role = 'HANDYMAN' THEN 'SMS' ELSE preferred_channel END "
+                    "WHERE id = :u"
+                ),
                 {"p": row.phone_e164, "u": user["id"]},
             )
             conn.execute(
                 text("DELETE FROM phone_verifications WHERE user_id = :u"), {"u": user["id"]}
             )
-            return _load(conn, user)
+            return
     if wrong:  # a separate transaction, so the attempt is counted even though we answer 400
         with shared_engine().begin() as conn:
             conn.execute(
@@ -319,6 +327,106 @@ def verify_phone(body: CodeIn, user: Pro):
                 {"u": user["id"]},
             )
         raise HTTPException(400, "That code is not right")
+
+
+@router.post("/phone", response_model=PhoneStarted)
+def start_phone_change(body: PhoneIn, user: Pro):
+    return _start_phone(user, body)
+
+
+@router.post("/phone/verify", response_model=ProfileOut)
+def verify_phone(body: CodeIn, user: Pro):
+    _verify_phone(user, body)
+    with shared_engine().connect() as conn:
+        return _load(conn, user)
+
+
+# ---------- the customer's own profile ----------
+customer_router = APIRouter(prefix="/me/profile", tags=["customer"])
+
+
+def customer_user(user: Annotated[dict, Depends(current_user)]) -> dict:
+    if user["role"] == "HANDYMAN":
+        raise HTTPException(403, "Handymen have their own profile")
+    return user
+
+
+Customer = Annotated[dict, Depends(customer_user)]
+
+
+class CustomerProfileOut(BaseModel):
+    display_name: str | None
+    email: str | None
+    phone: str | None  # masked
+    phone_pending: bool
+    home_zip: str | None
+
+
+class CustomerProfileIn(BaseModel):
+    display_name: str | None = Field(default=None, max_length=60)
+    home_zip: str | None = None
+
+    @field_validator("display_name")
+    @classmethod
+    def _name(cls, v: str | None) -> str | None:
+        v = " ".join((v or "").split())
+        return v or None
+
+    @field_validator("home_zip")
+    @classmethod
+    def _zip(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        if not v:
+            return None
+        if not re.fullmatch(r"\d{5}", v):
+            raise ValueError("ZIP must be 5 digits")
+        return v
+
+
+def _load_customer(conn, user) -> CustomerProfileOut:
+    r = conn.execute(
+        text(
+            "SELECT display_name, email, phone_e164, home_zip, "
+            "EXISTS (SELECT 1 FROM phone_verifications p WHERE p.user_id = users.id "
+            " AND p.expires_at > now()) AS phone_pending FROM users WHERE id = :u"
+        ),
+        {"u": user["id"]},
+    ).one()
+    return CustomerProfileOut(
+        display_name=r.display_name,
+        email=r.email,
+        phone=mask_phone(r.phone_e164),
+        phone_pending=r.phone_pending,
+        home_zip=r.home_zip,
+    )
+
+
+@customer_router.get("", response_model=CustomerProfileOut)
+def get_customer_profile(user: Customer):
+    with shared_engine().connect() as conn:
+        return _load_customer(conn, user)
+
+
+@customer_router.put("", response_model=CustomerProfileOut)
+def save_customer_profile(body: CustomerProfileIn, user: Customer):
+    with shared_engine().begin() as conn:
+        conn.execute(
+            text("UPDATE users SET display_name = :n, home_zip = :z WHERE id = :u"),
+            {"n": body.display_name, "z": body.home_zip, "u": user["id"]},
+        )
+        return _load_customer(conn, user)
+
+
+@customer_router.post("/phone", response_model=PhoneStarted)
+def start_customer_phone(body: PhoneIn, user: Customer):
+    return _start_phone(user, body)
+
+
+@customer_router.post("/phone/verify", response_model=CustomerProfileOut)
+def verify_customer_phone(body: CodeIn, user: Customer):
+    _verify_phone(user, body)
+    with shared_engine().connect() as conn:
+        return _load_customer(conn, user)
 
 
 # ---------- ops: create, approve, invite ----------

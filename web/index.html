@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Alche Home</title>
-<link rel="stylesheet" href="messages.css">
+<link rel="stylesheet" href="messages.css?v=16">
 <style>
 body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f8f9fa;color:#2c3e50;margin:0}
 main{max-width:620px;margin:40px auto;background:#fff;padding:28px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,.06)}
@@ -33,7 +33,9 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
 .ticket dt{color:#64748b}.ticket dd{margin:0}
 .ticket .summary{margin:6px 0 0;font-size:.92rem}
 .ticket button{width:auto;margin:8px 0 0;padding:6px 12px;font-size:.85rem}
-.top .actions{display:flex;gap:8px}
+.top{flex-wrap:wrap}
+.top .actions{display:flex;gap:8px;flex-wrap:wrap}
+.top button{white-space:nowrap}
 .tabs{display:flex;gap:6px;margin:10px 0}
 .tab{width:auto;margin:0;background:#fff;color:#2b5c8f;border:1px solid #2b5c8f}
 .tab.active{background:#2b5c8f;color:#fff}
@@ -92,6 +94,26 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
   <div class="tabs">
     <button id="tabChat" class="tab active" onclick="showTab('chat')">Assistant</button>
     <button id="tabMsgs" class="tab" onclick="showTab('msgs')">Messages <span id="msgBadge" class="badge hide"></span></button>
+    <button id="tabProfile" class="tab" onclick="showTab('profile')">My profile</button>
+  </div>
+  <div id="paneProfile" class="hide">
+    <label for="cName">Your name</label>
+    <input id="cName" type="text" maxlength="60" autocomplete="name">
+    <label for="cZip">Home ZIP code (used for new requests, so we do not have to ask)</label>
+    <input id="cZip" type="text" inputmode="numeric" maxlength="5" placeholder="92101" autocomplete="postal-code">
+    <button id="cSave" onclick="saveCustomerProfile()">Save profile</button>
+    <hr>
+    <label for="cNewPhone">Phone number (confirmed with a code we text you)</label>
+    <p id="cPhone" class="hint"></p>
+    <div class="row">
+      <input id="cNewPhone" type="tel" placeholder="+16195550199" autocomplete="tel">
+      <button class="alt" id="cSendCode" onclick="sendCustomerCode()">Send code</button>
+    </div>
+    <div class="row hide" id="cCodeRow">
+      <input id="cCode" type="text" inputmode="numeric" maxlength="8" placeholder="6-digit code" autocomplete="one-time-code">
+      <button id="cVerify" onclick="verifyCustomerCode()">Confirm</button>
+    </div>
+    <p id="cCodeHint" class="hint"></p>
   </div>
   <div id="paneMsgs" class="hide"><div id="msgsRoot"></div></div>
   <div id="paneChat">
@@ -107,7 +129,8 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
 </section>
 </main>
 
-<script src="messages.js"></script>
+<script src="i18n.js?v=16"></script>
+<script src="messages.js?v=16"></script>
 <script>
 // Dev-only: tokens live in sessionStorage. Production will use a safer scheme.
 const API = window.API_BASE || 'http://localhost:8000';
@@ -130,7 +153,7 @@ async function api(path, opts = {}) {
   const body = res.status === 204 ? null : await res.json().catch(() => ({}));
   if (!res.ok) {
     const d = body && body.detail;
-    throw Object.assign(new Error(typeof d === 'string' ? d : 'Request failed'), { status: res.status });
+    throw Object.assign(new Error(typeof d === 'string' ? I18N.err(d) : _('Request failed')), { status: res.status });
   }
   return body;
 }
@@ -168,14 +191,15 @@ async function emailAuth(kind) {
 }
 
 async function refreshNow() {
-  try { await doRefresh(); await loadProfile(); msg('Token refreshed'); }
-  catch (e) { signOutLocally('Session expired, please sign in again'); }
+  try { await doRefresh(); await loadProfile(); msg(_('Token refreshed')); }
+  catch (e) { signOutLocally(_('Session expired, please sign in again')); }
 }
 
 async function loadProfile() {
   const me = await authed('/me');
   $('profile').textContent = JSON.stringify(me, null, 2);
-  $('who').textContent = me.display_name || me.email || 'Signed in';
+  $('who').textContent = me.display_name || me.email || _('Signed in');
+  I18N.adopt(me.language);   // the language saved on the account wins over the browser's
 }
 
 const MAX_PHOTOS = 3, MAX_PHOTO_MB = 10;
@@ -196,10 +220,10 @@ function addPhotos(bubble, sources) {
   wrap.className = 'photos';
   sources.forEach(src => {
     const img = document.createElement('img');
-    img.alt = 'Attached photo';
+    img.alt = _('Attached photo');
     wrap.appendChild(img);
     if (src.url) img.src = src.url;
-    else photoUrl(src.id).then(u => { img.src = u; }).catch(() => { img.classList.add('broken'); img.alt = 'Photo unavailable'; });
+    else photoUrl(src.id).then(u => { img.src = u; }).catch(() => { img.classList.add('broken'); img.alt = _('Photo unavailable'); });
     img.onclick = () => { if (img.src) window.open(img.src, '_blank'); };
   });
   bubble.prepend(wrap);
@@ -210,7 +234,7 @@ const LABELS = {
   APPLIANCE: 'Appliance', GENERAL: 'General repair', EMERGENCY: 'Emergency', SAME_DAY: 'Today',
   FLEXIBLE: 'Flexible', LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High'
 };
-const label = v => LABELS[v] || v;
+const label = v => _(String(v));
 const CANCELLABLE = ['DRAFT', 'OPEN', 'MATCHING', 'UNMATCHED', 'ASSIGNED', 'IN_PROGRESS'];
 
 // Built with textContent only, so nothing from the ticket is interpreted as HTML.
@@ -218,16 +242,18 @@ function ticketCard(t) {
   const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
   const card = el('div', 'ticket');
   const head = el('div', 'head');
-  head.append(el('span', null, 'Repair request #' + t.number), el('span', 'status ' + t.status, t.status.replace('_', ' ')));
+  head.append(el('span', null, _('Repair request #{n}', { n: t.number })), el('span', 'status ' + t.status, _(t.status)));
   const dl = el('dl');
-  [['Type', label(t.category)], ['When', label(t.urgency)], ['ZIP', t.location_zip]]
-    .concat(t.severity ? [['Severity', label(t.severity)]] : [])
+  [[_('Type'), label(t.category)], [_('When'), label(t.urgency)], [_('ZIP'), t.location_zip]]
+    .concat(t.severity ? [[_('Severity'), label(t.severity)]] : [])
     .forEach(([k, v]) => dl.append(el('dt', null, k), el('dd', null, v)));
-  card.append(head, el('p', 'summary', t.issue_summary), dl);
+  const sum = el('p', 'summary', t.issue_summary);
+  sum.setAttribute('data-notranslate', '');   // the customer's own words
+  card.append(head, sum, dl);
   if (CANCELLABLE.includes(t.status)) {
-    const b = el('button', 'alt', 'Cancel request');
+    const b = el('button', 'alt', _('Cancel request'));
     b.onclick = async () => {
-      if (!confirm('Cancel repair request #' + t.number + '?')) return;
+      if (!confirm(_('Cancel repair request #{n}?', { n: t.number }))) return;
       b.disabled = true;
       try { card.replaceWith(ticketCard(await authed('/tickets/' + t.id + '/cancel', { method: 'POST' }))); }
       catch (e) { msg(e.message); b.disabled = false; }
@@ -235,16 +261,30 @@ function ticketCard(t) {
     card.append(b);
   }
   if (t.status === 'OPEN') card.append(handymanPicker(t, card));
-  else if (t.status === 'UNMATCHED') card.append(el('p', 'summary', 'No handyman is available for ZIP ' + t.location_zip + ' right now. Our team has been alerted and will follow up here.'));
+  else if (t.status === 'UNMATCHED') card.append(el('p', 'summary', _('No handyman is available for ZIP {zip} right now. Our team has been alerted and will follow up here.', { zip: t.location_zip })));
   else if (t.status === 'MATCHING') {
-    const p = el('p', 'summary', 'Looking for a handyman. This can take a few minutes.');
+    const p = el('p', 'summary', _('Looking for a handyman. This can take a few minutes.'));
     card.append(p);
     watchTicket(t, card, p);
   } else if (t.status === 'ASSIGNED' || t.status === 'IN_PROGRESS') {
-    card.append(el('p', 'summary', (t.handyman_name || 'A handyman') + ' has accepted your request.'));
-    const m = el('button', null, 'Message ' + (t.handyman_name || 'your handyman'));
+    const who = el('p', 'summary', t.handyman_name ? _('{name} has accepted your request.', { name: t.handyman_name }) : _('A handyman has accepted your request.'));
+    const phone = el('p', 'summary');
+    const m = el('button', null, _('Message {name}', { name: t.handyman_name || _('your handyman') }));
     m.onclick = () => { showTab('msgs'); msgs.open(t.id); };
-    card.append(m);
+    card.append(who, phone, m);
+    // The card from the chat history has no handyman details; load them (name, and number if shared).
+    authed('/tickets/' + t.id).then(d => {
+      if (d.handyman_name) {
+        who.textContent = _('{name} has accepted your request.', { name: d.handyman_name });
+        m.textContent = _('Message {name}', { name: d.handyman_name });
+      }
+      if (d.handyman_phone) {
+        const a = document.createElement('a');
+        a.href = 'tel:' + d.handyman_phone;
+        a.textContent = d.handyman_phone;
+        phone.append(_('Phone: {phone}', { phone: '' }), a);
+      }
+    }).catch(() => {});
   }
   return card;
 }
@@ -262,12 +302,12 @@ function watchTicket(t, card, p) {
         await loadChat();             // the status message from the assistant is in the chat now
         return;
       }
-      let txt = 'Looking for a handyman.';
+      let txt = _('Looking for a handyman.');
       if (d.offers_sent) {
-        txt += ' Asked ' + d.offers_sent + ' of up to ' + d.max_offers + '.';
+        txt += _(' Asked {n} of up to {max}.', { n: d.offers_sent, max: d.max_offers });
         if (d.offer_expires_at) {
           const mins = Math.max(0, Math.ceil((new Date(d.offer_expires_at) - Date.now()) / 60000));
-          txt += ' Waiting for a reply (' + mins + ' min left before we ask the next one).';
+          txt += _(' Waiting for a reply ({mins} min left before we ask the next one).', { mins });
         }
       }
       p.textContent = txt;
@@ -288,32 +328,32 @@ function handymanPicker(t, card) {
       const body = JSON.stringify(handyman_id ? { handyman_id } : {});
       const updated = await authed('/tickets/' + t.id + '/dispatch', { method: 'POST', headers: JSON_HEADERS, body });
       card.replaceWith(ticketCard(updated));
-      if (updated.status === 'UNMATCHED') msg('We could not find an available handyman for this request.');
+      if (updated.status === 'UNMATCHED') msg(_('We could not find an available handyman for this request.'));
     } catch (e) { msg(e.message); btn.disabled = false; }
   };
-  const auto = el('button', null, 'Find me a handyman');
-  auto.title = 'We ask the best match first, then the next, until someone accepts';
+  const auto = el('button', null, _('Find me a handyman'));
+  auto.title = _('We ask the best match first, then the next, until someone accepts');
   auto.onclick = () => start(null, auto);
-  const choose = el('button', 'alt', 'Choose a handyman');
+  const choose = el('button', 'alt', _('Choose a handyman'));
   choose.onclick = async () => {
     choose.disabled = true; msg();
     try {
       const opts = await authed('/tickets/' + t.id + '/handymen');
       list.replaceChildren(...(opts.length ? opts.map(o => {
         const row = el('div', 'opt');
-        const info = el('span', null, o.display_name + ' · ' + o.rating_avg.toFixed(1) + ' stars · ' + Math.round(o.response_rate * 100) + '% reply rate ');
-        if (o.recommended) info.append(el('span', 'star', 'Best match'));
-        const pick = el('button', 'alt', 'Choose');
+        const info = el('span', null, _('{name} · {rating} stars · {rate}% reply rate ', { name: o.display_name, rating: o.rating_avg.toFixed(1), rate: Math.round(o.response_rate * 100) }));
+        if (o.recommended) info.append(el('span', 'star', _('Best match')));
+        const pick = el('button', 'alt', _('Choose'));
         pick.onclick = () => start(o.handyman_id, pick);
         row.append(info, pick);
         return row;
-      }) : [el('p', 'hint', 'No handyman covers ZIP ' + t.location_zip + ' right now. Tap Find me a handyman and our team will follow up.')]));
+      }) : [el('p', 'hint', _('No handyman covers ZIP {zip} right now. Tap Find me a handyman and our team will follow up.', { zip: t.location_zip }))]));
     } catch (e) { msg(e.message); }
     choose.disabled = false;
   };
   const buttons = el('div', 'buttons');
   buttons.append(auto, choose);
-  box.append(el('p', 'hint', 'Next: pick a handyman, or let us choose. If yours is busy we move on to the next best match.'), buttons, list);
+  box.append(el('p', 'hint', _('Next: pick a handyman, or let us choose. If yours is busy we move on to the next best match.')), buttons, list);
   return box;
 }
 
@@ -321,15 +361,58 @@ let msgs = null;
 function showTab(which) {
   $('paneChat').classList.toggle('hide', which !== 'chat');
   $('paneMsgs').classList.toggle('hide', which !== 'msgs');
+  $('paneProfile').classList.toggle('hide', which !== 'profile');
   $('tabChat').classList.toggle('active', which === 'chat');
   $('tabMsgs').classList.toggle('active', which === 'msgs');
+  $('tabProfile').classList.toggle('active', which === 'profile');
   if (which === 'msgs' && msgs) msgs.refresh();
+  if (which === 'profile') loadCustomerProfile();
+}
+
+// ---- my profile: name, home ZIP and a confirmed phone number ----
+function showCustomerProfile(p) {
+  $('cName').value = p.display_name || '';
+  $('cZip').value = p.home_zip || '';
+  $('cPhone').textContent = p.phone ? _('Current number: {phone}', { phone: p.phone }) : '';
+}
+async function loadCustomerProfile() {
+  try { showCustomerProfile(await authed('/me/profile')); } catch (e) { msg(e.message); }
+}
+async function saveCustomerProfile() {
+  $('cSave').disabled = true; msg();
+  try {
+    showCustomerProfile(await authed('/me/profile', {
+      method: 'PUT', headers: JSON_HEADERS,
+      body: JSON.stringify({ display_name: $('cName').value, home_zip: $('cZip').value })
+    }));
+    msg(_('Profile saved.'));
+  } catch (e) { msg(e.status === 422 ? _('Enter a 5-digit ZIP code.') : e.message); }
+  $('cSave').disabled = false;
+}
+async function sendCustomerCode() {
+  $('cSendCode').disabled = true; msg();
+  try {
+    const r = await authed('/me/profile/phone', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ phone: $('cNewPhone').value }) });
+    $('cCodeRow').classList.remove('hide');
+    $('cCodeHint').textContent = _('We texted a code to {to} (valid {mins} minutes).', { to: r.sent_to, mins: r.expires_in_minutes }) +
+      (r.dev_code ? _(' Local testing code: {code}', { code: r.dev_code }) : '');
+  } catch (e) { msg(e.status === 422 ? _('Enter the number like +16195550199.') : e.message); }
+  $('cSendCode').disabled = false;
+}
+async function verifyCustomerCode() {
+  $('cVerify').disabled = true; msg();
+  try {
+    showCustomerProfile(await authed('/me/profile/phone/verify', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ code: $('cCode').value }) }));
+    $('cCodeRow').classList.add('hide'); $('cCodeHint').textContent = ''; $('cNewPhone').value = ''; $('cCode').value = '';
+    msg(_('Phone number confirmed.'));
+  } catch (e) { msg(e.message); }
+  $('cVerify').disabled = false;
 }
 
 async function createRequest() {
   const btn = $('create');
   btn.disabled = true; msg();
-  const thinking = addBubble({ sender: 'BOT', body: 'Working on your request...' }, 'pending');
+  const thinking = addBubble({ sender: 'BOT', body: _('Working on your request...') }, 'pending');
   try {
     const data = await authed('/chat/request-ticket', { method: 'POST' });
     thinking.remove();
@@ -339,7 +422,7 @@ async function createRequest() {
 }
 
 async function newRequest() {
-  if (!confirm('Start a new request? This chat will be closed; existing repair requests are kept.')) return;
+  if (!confirm(_('Start a new request? This chat will be closed; existing repair requests are kept.'))) return;
   try { await authed('/chat/new', { method: 'POST' }); await loadChat(); msg(); }
   catch (e) { msg(e.message); }
 }
@@ -350,6 +433,7 @@ function addBubble(m, extra, localUrls) {
   const d = document.createElement('div');
   d.className = 'bubble ' + m.sender + (m.flag === 'EMERGENCY' ? ' EMERGENCY' : '') + (extra ? ' ' + extra : '');
   d.textContent = m.body;            // textContent: message text is never interpreted as HTML
+  d.setAttribute('data-notranslate', '');
   if (localUrls && localUrls.length) addPhotos(d, localUrls.map(url => ({ url })));
   else if (m.media_ids && m.media_ids.length) addPhotos(d, m.media_ids.map(id => ({ id })));
   if (m.ticket) d.appendChild(ticketCard(m.ticket));
@@ -364,7 +448,7 @@ async function loadChat() {
   if (!data.messages.length) {
     const e = document.createElement('div');
     e.className = 'empty';
-    e.textContent = 'No messages yet. Describe the problem or attach a photo.';
+    e.textContent = _('No messages yet. Describe the problem or attach a photo.');
     $('chat').appendChild(e);
   }
   data.messages.forEach(m => addBubble(m));
@@ -379,7 +463,7 @@ function renderPreviews() {
     const img = document.createElement('img');
     img.src = f.url; img.alt = f.file.name;
     const x = document.createElement('button');
-    x.type = 'button'; x.textContent = '\u00d7'; x.title = 'Remove';
+    x.type = 'button'; x.textContent = '\u00d7'; x.title = _('Remove');
     x.onclick = () => { URL.revokeObjectURL(f.url); pendingFiles.splice(i, 1); renderPreviews(); };
     p.append(img, x);
     box.appendChild(p);
@@ -389,9 +473,9 @@ function renderPreviews() {
 $('file').addEventListener('change', e => {
   msg();
   for (const file of e.target.files) {
-    if (pendingFiles.length >= MAX_PHOTOS) { msg('You can attach up to ' + MAX_PHOTOS + ' photos per message.'); break; }
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { msg(file.name + ': only JPEG, PNG or WebP photos.'); continue; }
-    if (file.size > MAX_PHOTO_MB * 1024 * 1024) { msg(file.name + ' is larger than ' + MAX_PHOTO_MB + ' MB.'); continue; }
+    if (pendingFiles.length >= MAX_PHOTOS) { msg(_('You can attach up to {n} photos per message.', { n: MAX_PHOTOS })); break; }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { msg(_('{name}: only JPEG, PNG or WebP photos.', { name: file.name })); continue; }
+    if (file.size > MAX_PHOTO_MB * 1024 * 1024) { msg(_('{name} is larger than {n} MB.', { name: file.name, n: MAX_PHOTO_MB })); continue; }
     pendingFiles.push({ file, url: URL.createObjectURL(file) });
   }
   e.target.value = '';                // allow choosing the same file again
@@ -411,7 +495,7 @@ async function sendMessage() {
   $('send').disabled = true; msg();
   // Show the message and a "thinking" bubble right away; the real ones replace them.
   const mine = addBubble({ sender: 'USER', body }, 'pending', files.map(f => f.url));
-  const thinking = addBubble({ sender: 'BOT', body: files.length ? 'Looking at your photo...' : 'Thinking...' }, 'pending');
+  const thinking = addBubble({ sender: 'BOT', body: files.length ? _('Looking at your photo...') : _('Thinking...') }, 'pending');
   input.value = ''; pendingFiles = []; renderPreviews();
   try {
     const media_ids = [];
@@ -442,11 +526,12 @@ async function showApp() {
     msgs = AlcheMessages.mount($('msgsRoot'), { authed, onUnread: n => {
       const b = $('msgBadge'); b.textContent = n; b.classList.toggle('hide', !n);
     } });
+    I18N.apply();
     showTab('chat');
   } catch (e) {
     console.error('showApp failed', e);
-    if (e.status === 401) signOutLocally('Please sign in again (' + e.message + ')');
-    else msg('Signed in, but loading failed: ' + e.message + (e.status ? ' (HTTP ' + e.status + ')' : ''));
+    if (e.status === 401) signOutLocally(_('Please sign in again ({m})', { m: e.message }));
+    else msg(_('Signed in, but loading failed: {m}', { m: e.message + (e.status ? ' (HTTP ' + e.status + ')' : '') }));
   }
 }
 
@@ -474,17 +559,31 @@ $('text').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) sendMessage();
 });
 
+// Switching language: save it on the account and redraw what the script built.
+I18N.persist = async l => {
+  if (!store.get('access')) return;
+  try { await authed('/me/language', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ language: l }) }); }
+  catch (e) { /* the choice still applies in this browser */ }
+};
+I18N.onChange(() => {
+  if (store.get('access') && !$('signedIn').classList.contains('hide')) {
+    loadChat().catch(() => {});
+    if (msgs) msgs.relabel();
+    if (!$('paneProfile').classList.contains('hide')) loadCustomerProfile();
+  }
+});
+
 (function init() {
   const hadHash = location.hash.length > 1;
   const params = new URLSearchParams(location.hash.slice(1));
   history.replaceState(null, '', location.pathname);   // remove tokens from the address bar
   if (params.get('error')) {
-    const map = { account_exists: 'An account with that email already exists. Use your original sign-in method.' };
-    msg(map[params.get('error')] || 'Sign-in failed: ' + params.get('error'));
+    const map = { account_exists: _('An account with that email already exists. Use your original sign-in method.') };
+    msg(map[params.get('error')] || _('Sign-in failed: {m}', { m: params.get('error') }));
   } else if (params.get('access_token')) {
     saveTokens({ access_token: params.get('access_token'), refresh_token: params.get('refresh_token') });
   }
-  else if (hadHash) msg('Unexpected sign-in response: no tokens were returned');
+  else if (hadHash) msg(_('Unexpected sign-in response: no tokens were returned'));
   console.log('init: hash present =', hadHash, '| has access token =', !!store.get('access'));
   if (store.get('access')) showApp();
 })();
