@@ -69,4 +69,4 @@ jobs:
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
       - name: Release
-        run: ./deploy/release.sh
+        run: bash ./deploy/release.sh
