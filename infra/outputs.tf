@@ -21,3 +21,31 @@ output "media_bucket" {
 output "pubsub_topics" {
   value = [for t in google_pubsub_topic.topics : t.name]
 }
+
+output "web_url" {
+  description = "Open this to use the app (customer page; /handyman.html and /admin.html on the same address)"
+  value       = google_cloud_run_v2_service.web.uri
+}
+
+output "api_url" {
+  value = google_cloud_run_v2_service.core_api.uri
+}
+
+output "tools_job_name" {
+  value = google_cloud_run_v2_job.tools.name
+}
+
+output "deployer_service_account" {
+  description = "Set as the GCP_DEPLOYER_SA variable of the GitHub environment"
+  value       = var.github_repo != "" ? google_service_account.deployer[0].email : null
+}
+
+output "workload_identity_provider" {
+  description = "Set as the GCP_WORKLOAD_IDENTITY_PROVIDER variable of the GitHub environment"
+  value       = var.github_repo != "" ? google_iam_workload_identity_pool_provider.github[0].name : null
+}
+
+output "name" {
+  description = "Prefix of the Cloud Run services and jobs (NAME_PREFIX-ENV)"
+  value       = local.name
+}

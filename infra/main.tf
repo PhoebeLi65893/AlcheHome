@@ -169,8 +169,10 @@ resource "google_cloud_run_v2_service" "core_api" {
   template {
     service_account = google_service_account.run.email
 
+    # One instance always on, with CPU always allocated: the job-offer timeout sweeper runs
+    # inside the API process and must keep running between requests.
     scaling {
-      min_instance_count = 0
+      min_instance_count = var.min_instances
       max_instance_count = 3
     }
 
@@ -184,8 +186,16 @@ resource "google_cloud_run_v2_service" "core_api" {
     containers {
       image = var.core_api_image
 
+      resources {
+        cpu_idle = false
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+      }
+
       dynamic "env" {
-        for_each = local.db_env
+        for_each = merge(local.db_env, local.plain_env)
         content {
           name  = env.key
           value = env.value
@@ -209,6 +219,18 @@ resource "google_cloud_run_v2_service" "core_api" {
           }
         }
       }
+      dynamic "env" {
+        for_each = google_secret_manager_secret.optional
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value.secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
 
       volume_mounts {
         name       = "cloudsql"
@@ -217,11 +239,23 @@ resource "google_cloud_run_v2_service" "core_api" {
     }
   }
 
+  # The release pipeline deploys new images and revisions; Terraform keeps the rest.
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,
+      template[0].revision,
+      client,
+      client_version,
+    ]
+  }
+
   depends_on = [
     google_secret_manager_secret_version.db_password,
     google_secret_manager_secret_iam_member.run_db_password,
     google_secret_manager_secret_version.jwt,
     google_secret_manager_secret_iam_member.run_jwt,
+    google_secret_manager_secret_version.optional,
+    google_secret_manager_secret_iam_member.run_optional,
     google_project_iam_member.run_sql,
   ]
 }
@@ -280,6 +314,14 @@ resource "google_cloud_run_v2_job" "migrate" {
         }
       }
     }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].template[0].containers[0].image,
+      client,
+      client_version,
+    ]
   }
 
   depends_on = [

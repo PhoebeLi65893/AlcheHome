@@ -1,2 +1,21 @@
 project_id = "your-gcp-project-id"
 region     = "us-west1"
+
+# --- public test deployment ---
+allow_public_access = true
+test_mode           = true # show phone verification codes in the response (no SMS needed). Never for production.
+dispatch_auto       = true # offer new tickets to handymen automatically
+min_instances       = 1    # keeps the job-offer timeout sweeper running
+
+# GitHub repository allowed to deploy (owner/name). Leave empty to deploy by hand.
+github_repo = "your-github-user/AlcheHome"
+
+# --- optional: leave empty and the feature simply stays off ---
+# gemini_api_key       = ""
+# twilio_account_sid   = ""
+# twilio_auth_token    = ""
+# twilio_from_number   = "+1..."
+# google_client_id     = ""
+# google_client_secret = ""
+# facebook_app_id      = ""
+# facebook_app_secret  = ""
