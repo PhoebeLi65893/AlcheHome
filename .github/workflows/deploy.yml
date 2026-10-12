@@ -1,0 +1,72 @@
+name: Deploy
+
+# Dev is released automatically when CI passes on main. Prod is released by hand from the
+# Actions tab; configure required reviewers on the "prod" environment to add an approval step.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Where to deploy
+        type: choice
+        options: [dev, prod]
+        default: dev
+      ref:
+        description: Commit, branch or tag to deploy (default is main)
+        required: false
+
+permissions:
+  contents: read
+  id-token: write # lets the job prove its identity to Google (Workload Identity Federation)
+
+# One release at a time per environment; a newer push waits instead of racing.
+concurrency:
+  group: deploy-${{ inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: ${{ inputs.environment || 'dev' }}
+    env:
+      ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION || 'us-west1' }}
+      NAME_PREFIX: ${{ vars.NAME_PREFIX || 'alche' }}
+    steps:
+      - name: Check configuration
+        run: |
+          missing=0
+          for v in GCP_PROJECT_ID GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SA; do
+            if [ -z "$(printenv "$v")" ]; then echo "::error::Set the GitHub environment variable $v"; missing=1; fi
+          done
+          exit $missing
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOYER_SA: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.ref || 'main' }}
+
+      - name: Work out the version
+        run: echo "SHORT_SHA=$(git rev-parse --short=10 HEAD)" >> "$GITHUB_ENV"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Let Docker push to Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Release
+        run: ./deploy/release.sh

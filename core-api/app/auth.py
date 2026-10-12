@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.db import shared_engine
+from app.ratelimit import limit
 from app.security import (
     burn_password_check,
     create_access_token,
@@ -70,7 +71,12 @@ def issue_tokens(conn, user_id, role) -> tuple[TokenOut, str]:
 
 
 # ---------- email / password ----------
-@router.post("/register", response_model=TokenOut, status_code=201)
+@router.post(
+    "/register",
+    response_model=TokenOut,
+    status_code=201,
+    dependencies=[Depends(limit("register", 20, 3600))],
+)
 def register(body: RegisterIn):
     try:
         with shared_engine().begin() as conn:
@@ -91,7 +97,7 @@ def register(body: RegisterIn):
     return tokens
 
 
-@router.post("/login", response_model=TokenOut)
+@router.post("/login", response_model=TokenOut, dependencies=[Depends(limit("login", 60, 600))])
 def login(body: LoginIn):
     with shared_engine().begin() as conn:
         user = conn.execute(

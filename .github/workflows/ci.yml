@@ -52,8 +52,24 @@ jobs:
       - name: Smoke test /health
         run: |
           docker run -d --name api -p 8000:8000 alche-core-api
-          for i in $(seq 1 15); do curl -fs localhost:8000/health && exit 0; sleep 2; done
+          for _ in $(seq 1 15); do curl -fs localhost:8000/health && exit 0; sleep 2; done
           docker logs api; exit 1
+      - name: Build web image
+        run: docker build -t alche-web ./web
+      - name: Smoke test the web pages
+        run: |
+          docker run -d --name web -p 8080:8080 -e API_BASE=https://api.example.test alche-web
+          for _ in $(seq 1 15); do curl -fs localhost:8080/healthz && break; sleep 2; done
+          curl -fs localhost:8080/ | grep -q "Alche Home"
+          curl -fs localhost:8080/handyman.html | grep -q "Alche Home Pro"
+          curl -fs localhost:8080/config.js | grep -q "https://api.example.test"
+
+  release-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint the release script and the web container scripts
+        run: shellcheck deploy/release.sh web/docker/40-config.sh
 
   terraform:
     runs-on: ubuntu-latest

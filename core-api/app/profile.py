@@ -23,6 +23,7 @@ from app.config import get_settings
 from app.db import shared_engine
 from app.dispatch import Outgoing, deliver
 from app.pro import handyman_user
+from app.ratelimit import limit
 
 SKILL_OPTIONS = [
     {"category": "PLUMBING", "label": "Pipes and plumbing"},
@@ -76,6 +77,13 @@ def create_invite(conn, user_id) -> str:
 
 def invite_url(token: str) -> str:
     return f"{get_settings().web_base_url}/handyman.html#invite={token}"
+
+
+def _shows_codes() -> bool:
+    """Show the verification code in the response: local development and test deployments
+    only (TEST_MODE), where real SMS may not be available. Never in production."""
+    s = get_settings()
+    return s.app_env == "local" or s.test_mode
 
 
 def _code_hash(user_id, code: str) -> str:
@@ -281,7 +289,7 @@ def _start_phone(user, body: PhoneIn) -> PhoneStarted:
     return PhoneStarted(
         sent_to=mask_phone(phone) or "",
         expires_in_minutes=CODE_TTL_MINUTES,
-        dev_code=code if get_settings().app_env == "local" else None,
+        dev_code=code if _shows_codes() else None,
     )
 
 
@@ -329,7 +337,9 @@ def _verify_phone(user, body: CodeIn) -> None:
         raise HTTPException(400, "That code is not right")
 
 
-@router.post("/phone", response_model=PhoneStarted)
+@router.post(
+    "/phone", response_model=PhoneStarted, dependencies=[Depends(limit("phone-code", 10, 3600))]
+)
 def start_phone_change(body: PhoneIn, user: Pro):
     return _start_phone(user, body)
 
@@ -417,7 +427,9 @@ def save_customer_profile(body: CustomerProfileIn, user: Customer):
         return _load_customer(conn, user)
 
 
-@customer_router.post("/phone", response_model=PhoneStarted)
+@customer_router.post(
+    "/phone", response_model=PhoneStarted, dependencies=[Depends(limit("phone-code", 10, 3600))]
+)
 def start_customer_phone(body: PhoneIn, user: Customer):
     return _start_phone(user, body)
 

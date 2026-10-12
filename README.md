@@ -239,3 +239,10 @@ their job" in their profile (off by default). When they do, the job's customer s
 in the conversation, and calls from their own phone. There is no call button or call bridge in this version.
 API: `GET/PUT /me/profile`, `POST /me/profile/phone`, `POST /me/profile/phone/verify`, and `handyman_phone` on
 `GET /tickets/{id}` / `counterpart_phone` on `GET /threads/{id}/messages` (customer side only).
+
+## T13-3: release to Google Cloud for public testing
+
+`terraform apply` (see [infra/README.md](infra/README.md)) creates the environment; after that every push to `main`
+that passes CI is released automatically by `.github/workflows/deploy.yml` (`deploy/release.sh`): images, database
+migrations, a new API revision tested before it gets traffic, automatic rollback, then the web pages. The result
+is one public address: `/` for customers, `/handyman.html` for handymen, `/admin.html` for ops.

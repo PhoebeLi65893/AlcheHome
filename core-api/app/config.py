@@ -31,6 +31,13 @@ class Settings:
     twilio_messaging_service_sid: str = ""
     dispatch_auto: bool = False
     dispatch_timeout_s: float = 0.0
+    test_mode: bool = False
+
+
+def _extra_origins() -> list[str]:
+    """More allowed web origins (comma separated), for example a custom domain."""
+    raw = os.getenv("CORS_ORIGINS") or ""
+    return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
 
 
 def get_settings() -> Settings:
@@ -48,7 +55,7 @@ def get_settings() -> Settings:
         refresh_ttl_days=int(os.getenv("REFRESH_TTL_DAYS") or 30),
         api_base_url=(os.getenv("API_BASE_URL") or "http://localhost:8000").rstrip("/"),
         web_base_url=web,
-        cors_origins=[web],
+        cors_origins=[web] + _extra_origins(),
         google_client_id=os.getenv("GOOGLE_CLIENT_ID") or "",
         google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET") or "",
         facebook_app_id=os.getenv("FACEBOOK_APP_ID") or "",
@@ -67,4 +74,5 @@ def get_settings() -> Settings:
         twilio_messaging_service_sid=os.getenv("TWILIO_MESSAGING_SERVICE_SID") or "",
         dispatch_auto=(os.getenv("DISPATCH_AUTO") or "").lower() in {"1", "true", "yes"},
         dispatch_timeout_s=float(os.getenv("DISPATCH_TIMEOUT_S") or 0),
+        test_mode=(os.getenv("TEST_MODE") or "").lower() in {"1", "true", "yes"},
     )

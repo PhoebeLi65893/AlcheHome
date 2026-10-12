@@ -57,7 +57,7 @@ async def lifespan(_app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="Alche Home Core API", version="0.16.0", lifespan=lifespan)
+app = FastAPI(title="Alche Home Core API", version="0.17.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -85,6 +85,7 @@ def health() -> dict:
         "service": "core-api",
         "version": app.version,
         "env": os.getenv("APP_ENV", "local"),
+        "revision": os.getenv("K_REVISION", ""),  # the Cloud Run revision, set by Google
     }
 
 

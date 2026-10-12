@@ -15,6 +15,7 @@ from app.conversations import (
 )
 from app.db import shared_engine
 from app.media import owned_uploads
+from app.ratelimit import limit
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -59,14 +60,24 @@ def new_conversation(user: User):
     return ChatOut(conversation_id=cid, messages=[])
 
 
-@router.post("/request-ticket", response_model=ChatOut, status_code=201)
+@router.post(
+    "/request-ticket",
+    response_model=ChatOut,
+    status_code=201,
+    dependencies=[Depends(limit("chat", 120, 600))],
+)
 def request_ticket(user: User):
     """The Create request button: create the ticket, or ask for what is missing."""
     turn = run_turn(user["id"], "WEB", "Create a repair request.", want_ticket=True)
     return ChatOut(conversation_id=turn.conversation_id, messages=[turn.mine, turn.bot])
 
 
-@router.post("/messages", response_model=ChatOut, status_code=201)
+@router.post(
+    "/messages",
+    response_model=ChatOut,
+    status_code=201,
+    dependencies=[Depends(limit("chat", 120, 600))],
+)
 def send(body: MessageIn, user: User):
     with shared_engine().connect() as conn:
         uploads = owned_uploads(conn, user["id"], body.media_ids)

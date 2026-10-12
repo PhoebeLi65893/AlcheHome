@@ -1,0 +1,20 @@
+server {
+    listen ${PORT};
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Pages and scripts are small: always revalidate so a release is picked up on reload.
+    add_header Cache-Control "no-cache";
+    add_header X-Content-Type-Options "nosniff";
+    add_header Referrer-Policy "same-origin";
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok";
+    }
+}
