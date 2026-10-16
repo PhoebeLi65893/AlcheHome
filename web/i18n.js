@@ -11,9 +11,12 @@
     'Confirm': '确认', 'Discard': '放弃', 'Choose': '选择', 'Assign': '分配', 'Approve': '批准',
     'Suspend': '暂停', 'Accept': '接单', 'Decline': '拒绝', 'Closed': '已关闭', 'Today': '今天',
     'Yesterday': '昨天', 'You': '你', 'Request failed': '请求失败', 'Failed to fetch': '无法连接到服务器',
+    'Cannot reach the server. Check your connection and try again.': '无法连接到服务器，请检查网络后重试。',
     'Please log in again.': '请重新登录。', 'Customer': '客户',
     // ---- customer profile and phone numbers ----
-    'My profile': '我的资料', 'Your name': '你的姓名',
+    'My profile': '我的资料', 'My requests': '我的请求', 'No requests yet.': '还没有请求。',
+    'All your repair requests, newest first. Open Messages to talk to your handyman.':
+      '你的所有维修请求，最新的在前。打开“消息”可以联系你的师傅。', 'Your name': '你的姓名',
     'Home ZIP code (used for new requests, so we do not have to ask)':
       '家庭邮编（用于新请求，这样我们就不用再问）',
     'Phone number (confirmed with a code we text you)': '手机号码（通过短信验证码确认）',

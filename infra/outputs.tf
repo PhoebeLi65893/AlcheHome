@@ -49,3 +49,8 @@ output "name" {
   description = "Prefix of the Cloud Run services and jobs (NAME_PREFIX-ENV)"
   value       = local.name
 }
+
+output "web_domain_dns_records" {
+  description = "Create these DNS records at your domain provider (Namecheap: Advanced DNS)"
+  value       = var.web_domain != "" ? google_cloud_run_domain_mapping.web[0].status[0].resource_records : []
+}

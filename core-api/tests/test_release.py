@@ -152,3 +152,14 @@ def test_limits_are_off_for_local_development(monkeypatch):
         for _ in range(70)
     }
     assert statuses == {401}
+
+
+def test_pages_report_an_unreachable_api_instead_of_doing_nothing():
+    for page in ["index.html", "handyman.html", "admin.html"]:
+        html = (REPO / "web" / page).read_text(encoding="utf-8")
+        assert "Cannot reach the server" in html, page
+
+
+def test_customer_page_has_a_list_of_all_requests():
+    html = (REPO / "web" / "index.html").read_text(encoding="utf-8")
+    assert 'id="paneRequests"' in html and "authed('/tickets')" in html

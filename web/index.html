@@ -94,7 +94,12 @@ details{margin:10px 0}summary{cursor:pointer;color:#2b5c8f;font-weight:600}
   <div class="tabs">
     <button id="tabChat" class="tab active" onclick="showTab('chat')">Assistant</button>
     <button id="tabMsgs" class="tab" onclick="showTab('msgs')">Messages <span id="msgBadge" class="badge hide"></span></button>
+    <button id="tabRequests" class="tab" onclick="showTab('requests')">My requests</button>
     <button id="tabProfile" class="tab" onclick="showTab('profile')">My profile</button>
+  </div>
+  <div id="paneRequests" class="hide">
+    <p class="hint">All your repair requests, newest first. Open Messages to talk to your handyman.</p>
+    <div id="requestsList"></div>
   </div>
   <div id="paneProfile" class="hide">
     <label for="cName">Your name</label>
@@ -150,7 +155,12 @@ function saveTokens(t) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(API + path, opts);
+  let res;
+  try {
+    res = await fetch(API + path, opts);
+  } catch (e) {   // network error, or the browser blocked the call (CORS)
+    throw Object.assign(new Error(_('Cannot reach the server. Check your connection and try again.')), { status: 0 });
+  }
   const body = res.status === 204 ? null : await res.json().catch(() => ({}));
   if (!res.ok) {
     const d = body && body.detail;
@@ -363,11 +373,24 @@ function showTab(which) {
   $('paneChat').classList.toggle('hide', which !== 'chat');
   $('paneMsgs').classList.toggle('hide', which !== 'msgs');
   $('paneProfile').classList.toggle('hide', which !== 'profile');
+  $('paneRequests').classList.toggle('hide', which !== 'requests');
+  $('tabRequests').classList.toggle('active', which === 'requests');
   $('tabChat').classList.toggle('active', which === 'chat');
   $('tabMsgs').classList.toggle('active', which === 'msgs');
   $('tabProfile').classList.toggle('active', which === 'profile');
   if (which === 'msgs' && msgs) msgs.refresh();
   if (which === 'profile') loadCustomerProfile();
+  if (which === 'requests') loadRequests();
+}
+
+// ---- my requests: every ticket you have, not only the one in the current chat ----
+async function loadRequests() {
+  const box = $('requestsList');
+  try {
+    const list = await authed('/tickets');
+    box.replaceChildren(...(list.length ? list.map(t => ticketCard(t))
+      : [Object.assign(document.createElement('p'), { className: 'hint', textContent: _('No requests yet.') })]));
+  } catch (e) { msg(e.message); }
 }
 
 // ---- my profile: name, home ZIP and a confirmed phone number ----
@@ -571,6 +594,7 @@ I18N.onChange(() => {
     loadChat().catch(() => {});
     if (msgs) msgs.relabel();
     if (!$('paneProfile').classList.contains('hide')) loadCustomerProfile();
+    if (!$('paneRequests').classList.contains('hide')) loadRequests();
   }
 });
 

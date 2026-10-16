@@ -78,3 +78,35 @@ The invite link is printed in the job's logs. The ops page (`/admin.html`) can a
 * **Sign in with Google / Facebook.** Add `<api_url>/auth/google/callback` and `<api_url>/auth/facebook/callback` to
   the redirect addresses of those apps, or use email sign-in.
 * **Twilio webhook.** Set the number's incoming-message URL to `<api_url>/webhooks/twilio/sms`.
+
+## Your own domain (for example Namecheap)
+
+1. **Verify the domain for Google** (once). Open https://search.google.com/search-console with the same Google account
+   you use for `gcloud`/Terraform, add a **Domain** property for `yourdomain.com`, and add the TXT record it shows in
+   your DNS provider. Wait until it says verified.
+2. In `terraform.tfvars` set `web_domain = "app.yourdomain.com"`, then `terraform apply`.
+3. Create the DNS records that `terraform output web_domain_dns_records` prints. For a subdomain this is normally a
+   `CNAME` from `app` to `ghs.googlehosted.com.`.
+4. Wait for the https certificate (usually minutes, up to a day). The app is then at `https://app.yourdomain.com/`.
+
+The sign-in redirects and handyman invite links use this address, and the `run.app` address keeps working.
+If you use Google or Facebook sign-in, add the *API* address (`terraform output api_url`) as the redirect base as
+before; the web address does not change that.
+
+## Pause and resume (save money without destroying)
+
+The API instance and the database are billed by the hour. To pause overnight and keep all data:
+
+```bash
+# pause
+gcloud run services update alche-dev-core-api --region us-west1 --min-instances 0
+gcloud sql instances patch alche-dev-pg --activation-policy NEVER
+
+# resume (wait 1-2 minutes for the database before the second command)
+gcloud sql instances patch alche-dev-pg --activation-policy ALWAYS
+gcloud run services update alche-dev-core-api --region us-west1 --min-instances 1
+```
+
+While paused the web address does not work (the API cannot reach its database) and only the disk is billed.
+`terraform apply` starts everything again, so do not run it while paused. Use `terraform destroy` only when you
+will not test for a week or more: it deletes the database and every account and ticket in it.

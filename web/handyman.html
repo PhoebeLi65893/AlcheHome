@@ -148,7 +148,12 @@ const el = (tag, cls, txt) => {
 };
 
 async function api(path, opts = {}) {
-  const res = await fetch(API + path, opts);
+  let res;
+  try {
+    res = await fetch(API + path, opts);
+  } catch (e) {   // network error, or the browser blocked the call (CORS)
+    throw Object.assign(new Error(_('Cannot reach the server. Check your connection and try again.')), { status: 0 });
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const d = body && body.detail;

@@ -121,3 +121,9 @@ variable "facebook_app_secret" {
   default   = ""
   sensitive = true
 }
+
+variable "web_domain" {
+  description = "Your own address for the web pages, for example app.example.com (leave empty to use the run.app address)"
+  type        = string
+  default     = ""
+}

@@ -10,8 +10,19 @@ data "google_project" "this" {
 
 locals {
   # Cloud Run's stable URL shape, so each service can know the other's address up front.
-  api_url = "https://${local.name}-core-api-${data.google_project.this.number}.${var.region}.run.app"
-  web_url = "https://${local.name}-web-${data.google_project.this.number}.${var.region}.run.app"
+  api_url     = "https://${local.name}-core-api-${data.google_project.this.number}.${var.region}.run.app"
+  run_web_url = "https://${local.name}-web-${data.google_project.this.number}.${var.region}.run.app"
+
+  # With a custom domain, that address is the one people use (sign-in redirects, invite links);
+  # the run.app address keeps working and stays an allowed origin.
+  web_url = var.web_domain != "" ? "https://${var.web_domain}" : local.run_web_url
+  # Cloud Run serves a service on two equivalent addresses (the "project number" one above and
+  # a short hashed one, which is what the console and gcloud print). Allow both, plus any custom
+  # domain, so the pages work whichever address someone opens.
+  cors_origins = compact(concat(
+    var.extra_web_origins,
+    [local.run_web_url, google_cloud_run_v2_service.web.uri],
+  ))
 
   # Plain (non-secret) settings for core-api. Empty values are not set at all.
   plain_env = {
@@ -19,7 +30,7 @@ locals {
       API_BASE_URL       = local.api_url
       PUBLIC_BASE_URL    = local.api_url # the URL Twilio calls; used to check its signature
       WEB_BASE_URL       = local.web_url
-      CORS_ORIGINS       = join(",", var.extra_web_origins)
+      CORS_ORIGINS       = join(",", local.cors_origins)
       TEST_MODE          = var.test_mode ? "true" : "false"
       DISPATCH_AUTO      = var.dispatch_auto ? "true" : "false"
       GEMINI_MODEL       = var.gemini_model
@@ -105,6 +116,22 @@ resource "google_cloud_run_v2_service_iam_member" "web_public" {
   location = var.region
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# ---------- your own domain (for example app.example.com) ----------
+# The domain must be verified for the Google account running Terraform first (Search Console,
+# "Domain" property, DNS TXT record). Then create the DNS records shown in the output.
+resource "google_cloud_run_domain_mapping" "web" {
+  count    = var.web_domain != "" ? 1 : 0
+  location = var.region
+  name     = var.web_domain
+
+  metadata {
+    namespace = var.project_id
+  }
+  spec {
+    route_name = google_cloud_run_v2_service.web.name
+  }
 }
 
 # ---------- tools job: seed data, make an admin, invite a handyman ----------
